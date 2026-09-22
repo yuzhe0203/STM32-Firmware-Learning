@@ -1,0 +1,17 @@
+
+# Executable files
+*.exe
+
+# STM32CubeIDE build outputs
+Debug/
+Release/
+
+# Eclipse / CubeIDE local workspace metadata
+.metadata/
+RemoteSystemsTempFiles/
+
+# Editor and operating-system files
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

@@ -48,6 +48,7 @@
 
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
+DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
 
@@ -74,6 +75,31 @@ static uint8_t uart_discard_command = 0u;
 
 static bool led_is_on = false;
 
+#define UART_TX_RING_CAPACITY 256u
+
+/*
+ *
+ * Main loop produces response text.
+ * UART TX-complete callback consumes transmitted bytes.
+ *
+ * One byte remains unused so head == tail always means empty.
+ */
+static uint8_t uart_tx_ring[UART_TX_RING_CAPACITY];
+static volatile uint16_t uart_tx_head = 0u;
+static volatile uint16_t uart_tx_tail = 0u;
+
+static volatile uint16_t uart_tx_dma_len = 0u;
+static volatile uint8_t uart_tx_dma_active = 0u;
+
+/*
+ *
+ * Overflow policy
+ *  - Do not partially enqueue a message.
+ *  - Drop the newest entire message if there is insufficient space.
+ *  - Count Dropped messages for debugging.
+ */
+static volatile uint32_t uart_tx_dropped_messages = 0u;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -90,6 +116,9 @@ static void process_uart_byte(uint8_t byte);
 
 static void uart_ring_push(uint8_t byte);
 static bool uart_ring_pop(uint8_t *byte);
+
+static void uart_tx_kick_locked(void);
+static uint16_t uart_tx_free_space_locked(void);
 
 /* USER CODE END PFP */
 
@@ -262,6 +291,9 @@ static void MX_DMA_Init(void)
   /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+  /* DMA1_Stream6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
 
 }
 
@@ -272,7 +304,6 @@ static void MX_DMA_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
 
   /* USER CODE END MX_GPIO_Init_1 */
@@ -282,16 +313,6 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : PA5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_5;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -438,10 +459,100 @@ static void set_led(bool on)
 
 static void uart_send_text(const char *text)
 {
-  HAL_UART_Transmit(&huart2,
-                    (uint8_t *)text,
-                    (uint16_t)strlen(text),
-                    HAL_MAX_DELAY);
+  uint32_t primask;
+  size_t len;
+  uint16_t index;
+
+  len = strlen(text);
+
+  /*
+   *
+   * Every response in this project is much shorter than 255 bytes.
+   * Refuse messages that can never fit in the ring.
+   */
+  if (len == 0u || len >= UART_TX_RING_CAPACITY) return;
+
+  /*
+   *
+   * The main loop modified head while the UART-complete ISR modified tail.
+   * Protect the check, enqueue, and DMA-start operation as one transaction.
+   */
+  primask = __get_PRIMASK();
+  __disable_irq();;
+
+  if ((uint16_t)len > uart_tx_free_space_locked())
+	  uart_tx_dropped_messages++;
+  else {
+	  for (index = 0u; index < (uint16_t)len; index++) {
+		  uart_tx_ring[uart_tx_head] = (uint8_t)text[index];
+		  uart_tx_head = (uint16_t)(uart_tx_head + 1u) % UART_TX_RING_CAPACITY;
+	  }
+
+	  uart_tx_kick_locked();
+  }
+
+  if (primask == 0u) __enable_irq();
+}
+
+static uint16_t uart_tx_free_space_locked(void) {
+	uint16_t used;
+
+	if (uart_tx_head >= uart_tx_tail)
+		used = (uint16_t)(uart_tx_head - uart_tx_tail);
+	else
+		used = (uint16_t)(UART_TX_RING_CAPACITY - (uart_tx_tail - uart_tx_head));
+
+	return (uint16_t)((UART_TX_RING_CAPACITY - 1u) - used);
+}
+
+static void uart_tx_kick_locked(void) {
+	uint16_t contiguous_len;
+
+	if ((uart_tx_dma_active != 0u) || (uart_tx_head == uart_tx_tail)) return;
+
+	/*
+	 *
+	 * DMA can only read one contiguous memory range at a time.
+	 * if the queued message wraps around the end of ring, send
+	 * the tail-to-end segment now; TxCpltCallback starts the next one.
+	 */
+	if (uart_tx_head > uart_tx_tail)
+		contiguous_len = (uint16_t)(uart_tx_head - uart_tx_tail);
+	else
+		contiguous_len = (uint16_t)(UART_TX_RING_CAPACITY - uart_tx_tail);
+
+	uart_tx_dma_len = contiguous_len;
+	uart_tx_dma_active = 1u;
+
+	if (HAL_UART_Transmit_DMA(&huart2, &uart_tx_ring[uart_tx_tail], contiguous_len) != HAL_OK) {
+		/*
+		 *
+		 * Keep the queued data intact. A later call to uart_send_text()
+		 * can retry starting TX after transient HAL_BUSY conditions.
+		 */
+		uart_tx_dma_active = 0u;
+		uart_tx_dma_len = 0u;
+	}
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
+	if (huart->Instance != USART2) return;
+
+	/*
+	 * The DMA transfer fully complete, so its ring-buffer region
+	 * may now be reused by future responses.
+	 */
+	uart_tx_tail = (uint16_t)(uart_tx_tail + uart_tx_dma_len) % UART_TX_RING_CAPACITY;
+
+	uart_tx_dma_len = 0u;
+	uart_tx_dma_active = 0u;
+
+	/*
+	 *
+	 * Start the next contiguous queued segment, if any.
+	 * This callback already runs in interrupt context.
+	 */
+	uart_tx_kick_locked();
 }
 
 /* USER CODE END 4 */

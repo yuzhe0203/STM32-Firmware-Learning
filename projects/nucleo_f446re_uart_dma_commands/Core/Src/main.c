@@ -25,6 +25,8 @@
 #include <stdbool.h>
 #include <string.h>
 #include "stm32f4xx_nucleo.h"
+#include <stdio.h>
+#include <stdlib.h>
 
 /* USER CODE END Includes */
 
@@ -100,6 +102,13 @@ static volatile uint8_t uart_tx_dma_active = 0u;
  */
 static volatile uint32_t uart_tx_dropped_messages = 0u;
 
+#define BLINK_MIN_PERIOD_MS 100u
+#define BLINK_MAX_PERIOD_MS 2000u
+
+static bool blink_enable = false;
+static uint32_t blink_period_ms = 500u;
+static uint32_t last_blink_ms = 0u;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -119,6 +128,9 @@ static bool uart_ring_pop(uint8_t *byte);
 
 static void uart_tx_kick_locked(void);
 static uint16_t uart_tx_free_space_locked(void);
+
+static void run_blink_task(void);
+static void send_status(void);
 
 /* USER CODE END PFP */
 
@@ -165,8 +177,10 @@ int main(void)
   if (HAL_UARTEx_ReceiveToIdle_DMA(&huart2, uart_dma_rx, UART_DMA_RX_CAPACITY) != HAL_OK)
 	  Error_Handler();
 
+  last_blink_ms = HAL_GetTick();
+
   uart_send_text("\r\nUART DMA command controller ready\r\n");
-  uart_send_text("Commands: LED ON, LED OFF, STATUS\r\n> ");
+  uart_send_text("Commands: LED ON, LED OFF, STATUS, BLINK <100-2000>, BLINK OFF\r\n> ");
 
   /* USER CODE END 2 */
 
@@ -183,6 +197,8 @@ int main(void)
     /* USER CODE BEGIN 3 */
 
 	  uint8_t byte;
+
+	  run_blink_task();
 
 	  if (uart_ring_overflow != 0u) {
 		  uart_ring_overflow = 0u;
@@ -418,29 +434,63 @@ static void process_uart_byte(uint8_t byte)
 
 static void process_command(const char *command)
 {
-  if (strcmp(command, "LED ON") == 0)
-  {
-    set_led(true);
-    uart_send_text("OK: LED ON\r\n> ");
-  }
-  else if (strcmp(command, "LED OFF") == 0)
-  {
-    set_led(false);
-    uart_send_text("OK: LED OFF\r\n> ");
-  }
-  else if (strcmp(command, "STATUS") == 0)
-  {
-    uart_send_text(led_is_on ? "STATUS: LED ON\r\n> "
-                             : "STATUS: LED OFF\r\n> ");
-  }
-  else if (command[0] == '\0')
-  {
-    uart_send_text("> ");
-  }
-  else
-  {
-    uart_send_text("ERROR: unknown command\r\n> ");
-  }
+	char *end_ptr;
+	unsigned long requested_period;
+
+	if(strcmp(command, "HELP") == 0)
+	{
+		uart_send_text("Commands:\r\n");
+		uart_send_text(" LED ON\r\n");
+		uart_send_text(" LED OFF\r\n");
+		uart_send_text(" BLINK <100-2000>\r\n");
+		uart_send_text(" BLINK OFF\r\n");
+		uart_send_text(" STATUS\r\n> ");
+	}
+	else if (strcmp(command, "LED ON") == 0)
+	{
+		blink_enable = false;
+		set_led(true);
+		uart_send_text("OK: LED ON\r\n> ");
+	}
+	else if (strcmp(command, "LED OFF") == 0)
+	{
+		blink_enable = false;
+		set_led(false);
+		uart_send_text("OK: LED OFF\r\n> ");
+	}
+	else if (strcmp(command, "STATUS") == 0)
+	{
+		send_status();
+	}
+	else if (strcmp(command, "BLINK OFF") == 0)
+	{
+		blink_enable = false;
+		uart_send_text("OK: blink disabled\r\n> ");
+	}
+	else if (strncmp(command, "BLINK ", 6u) == 0)
+	{
+		requested_period = strtoul(&command[6], &end_ptr, 10);
+
+		if ((*end_ptr != '\0') || (requested_period < BLINK_MIN_PERIOD_MS) || (requested_period > BLINK_MAX_PERIOD_MS))
+		{
+			uart_send_text("ERROR: use BLINK <100-2000> or BLINK OFF\r\n> ");
+			return;
+		}
+
+		blink_period_ms = requested_period;
+		last_blink_ms = HAL_GetTick();
+		blink_enable = true;
+
+		uart_send_text("OK: blink enable\r\n> ");
+	}
+	else if (command[0] == '\0')
+	{
+		uart_send_text("> ");
+	}
+	else
+	{
+		uart_send_text("ERROR: unknown command; type HELP\r\n> ");
+	}
 }
 
 static void set_led(bool on)
@@ -553,6 +603,37 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
 	 * This callback already runs in interrupt context.
 	 */
 	uart_tx_kick_locked();
+}
+
+static void run_blink_task(void) {
+	uint32_t now_ms = HAL_GetTick();
+
+	/*
+	 *
+	 * Unsigned subtraction remains safe even when the 32-bit tick counter eventually wraps around.
+	 */
+	if (blink_enable && ((uint32_t)(now_ms - last_blink_ms)) >= blink_period_ms) {
+		last_blink_ms = now_ms;
+		set_led(!led_is_on);
+	}
+}
+
+static void send_status(void) {
+	char response[96];
+
+	if (blink_enable) {
+		(void)snprintf(response,
+					   sizeof(response),
+					   "STATUS: LED %s, BLINK ON (%lu ms)\r\n> ",
+					   led_is_on ? "ON" : "OFF", (unsigned long)blink_period_ms);
+	}
+	else {
+		(void)snprintf(response, sizeof(response),
+						"STATUS: LED %s, BLINK OFF\r\n> ",
+						led_is_on ? "ON" : "OFF");
+	}
+
+	uart_send_text(response);
 }
 
 /* USER CODE END 4 */

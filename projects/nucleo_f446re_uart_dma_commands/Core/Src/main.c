@@ -33,10 +33,23 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
+typedef struct {
+	uint32_t magic;
+	uint32_t version;
+	uint32_t blink_period_ms;
+	uint32_t checksum;
+} app_config_t;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+#define CONFIG_FLASH_ADDRESS 0x08060000u
+#define CONFIG_FLASH_SECTOR FLASH_SECTOR_7
+#define CONFIG_MAGIC 0x20040203u
+#define CONFIG_VERSION 1u
+#define BLINK_DEFAULT_MS 500u
 
 /* USER CODE END PD */
 
@@ -110,8 +123,10 @@ static volatile uint32_t uart_rx_command_overflows = 0u;
 #define BLINK_MAX_PERIOD_MS 2000u
 
 static bool blink_enable = false;
-static uint32_t blink_period_ms = 500u;
+static uint32_t blink_period_ms = BLINK_DEFAULT_MS;
 static uint32_t last_blink_ms = 0u;
+
+static bool config_loaded_from_flash = false;
 
 /* USER CODE END PV */
 
@@ -138,6 +153,10 @@ static void send_status(void);
 
 static void send_stats(void);
 static void reset_stats(void);
+
+static uint32_t config_calculate_checksum(const app_config_t *config);
+static bool config_is_valid(const app_config_t *config);
+static void config_load(void);
 
 /* USER CODE END PFP */
 
@@ -180,6 +199,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   set_led(false);
+  config_load();
 
   if (HAL_UARTEx_ReceiveToIdle_DMA(&huart2, uart_dma_rx, UART_DMA_RX_CAPACITY) != HAL_OK)
 	  Error_Handler();
@@ -187,7 +207,8 @@ int main(void)
   last_blink_ms = HAL_GetTick();
 
   uart_send_text("\r\nUART DMA command controller ready\r\n");
-  uart_send_text("Commands: LED ON, LED OFF, STATUS, STATS, RESET STATS, BLINK <100-2000>, BLINK OFF\r\n> ");
+  uart_send_text("Commands: LED ON, LED OFF, STATUS, STATS, RESET STATS, BLINK <100-2000>, BLINK OFF\r\n");
+  uart_send_text("Config: loaded from flash\r\n> ");
 
   /* USER CODE END 2 */
 
@@ -689,6 +710,33 @@ static void reset_stats(void) {
 	if (primask == 0u) __enable_irq();
 
 	uart_send_text("OK: stats reset\r\n> ");
+
+}
+
+static uint32_t config_calculate_checksum(const app_config_t *config) {
+	return config->magic ^ config->blink_period_ms ^ config->version ^ 930203u;
+}
+
+static bool config_is_valid(const app_config_t *config) {
+	if (config->magic != CONFIG_MAGIC)
+		return false;
+	else if (config->version != CONFIG_VERSION)
+		return false;
+	else if (config->checksum != config_calculate_checksum(config))
+		return false;
+	else if (config->blink_period_ms > BLINK_MAX_PERIOD_MS || config->blink_period_ms < BLINK_MIN_PERIOD_MS)
+		return false;
+	else
+		return true;
+}
+
+static void config_load(void) {
+	const app_config_t *config = (const app_config_t *)CONFIG_FLASH_ADDRESS;
+
+	if (config_is_valid(config)) {
+		blink_period_ms = config->blink_period_ms;
+		config_loaded_from_flash = true;
+	}
 
 }
 

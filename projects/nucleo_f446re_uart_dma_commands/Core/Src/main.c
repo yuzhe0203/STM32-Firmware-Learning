@@ -74,6 +74,7 @@ static volatile uint8_t uart_ring_overflow = 0u;
 static char uart_command[UART_COMMAND_CAPACITY];
 static uint16_t uart_command_len = 0u;
 static uint8_t uart_discard_command = 0u;
+static uint8_t uart_last_was_cr = 0u;
 
 static bool led_is_on = false;
 
@@ -101,6 +102,9 @@ static volatile uint8_t uart_tx_dma_active = 0u;
  *  - Count Dropped messages for debugging.
  */
 static volatile uint32_t uart_tx_dropped_messages = 0u;
+static volatile uint32_t uart_rx_events = 0u;
+static volatile uint32_t uart_rx_dropped_byte = 0u;
+static volatile uint32_t uart_rx_command_overflows = 0u;
 
 #define BLINK_MIN_PERIOD_MS 100u
 #define BLINK_MAX_PERIOD_MS 2000u
@@ -131,6 +135,9 @@ static uint16_t uart_tx_free_space_locked(void);
 
 static void run_blink_task(void);
 static void send_status(void);
+
+static void send_stats(void);
+static void reset_stats(void);
 
 /* USER CODE END PFP */
 
@@ -180,7 +187,7 @@ int main(void)
   last_blink_ms = HAL_GetTick();
 
   uart_send_text("\r\nUART DMA command controller ready\r\n");
-  uart_send_text("Commands: LED ON, LED OFF, STATUS, BLINK <100-2000>, BLINK OFF\r\n> ");
+  uart_send_text("Commands: LED ON, LED OFF, STATUS, STATS, RESET STATS, BLINK <100-2000>, BLINK OFF\r\n> ");
 
   /* USER CODE END 2 */
 
@@ -344,6 +351,8 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size) {
 	if (huart->Instance != USART2)
 		return;
 
+	uart_rx_events++;
+
 	/*
 	 *
 	 * In circular DMA mode, `size` is the current position in the DMA
@@ -373,6 +382,7 @@ static void uart_ring_push(uint8_t byte)
   if (next_head == uart_ring_tail)
   {
     uart_ring_overflow = 1u;
+    uart_rx_dropped_byte++;
     return;
   }
 
@@ -395,12 +405,14 @@ static bool uart_ring_pop(uint8_t *byte)
 
 static void process_uart_byte(uint8_t byte)
 {
-  if (byte == (uint8_t)'\r')
-  {
-    return;
-  }
+  uint8_t last_was_cr = uart_last_was_cr;
 
-  if (byte == (uint8_t)'\n')
+  uart_last_was_cr = (byte == (uint8_t)'\r') ? 1u : 0u;
+
+  if (byte == (uint8_t)'\n' && last_was_cr != 0u)
+	  return;
+
+  if (byte == (uint8_t)'\n' || byte == (uint8_t)'\r')
   {
     if (uart_discard_command != 0u)
     {
@@ -429,6 +441,7 @@ static void process_uart_byte(uint8_t byte)
   else
   {
     uart_discard_command = 1u;
+    uart_rx_command_overflows++;
   }
 }
 
@@ -444,7 +457,9 @@ static void process_command(const char *command)
 		uart_send_text(" LED OFF\r\n");
 		uart_send_text(" BLINK <100-2000>\r\n");
 		uart_send_text(" BLINK OFF\r\n");
-		uart_send_text(" STATUS\r\n> ");
+		uart_send_text(" STATUS\r\n");
+		uart_send_text(" STATS\r\n");
+		uart_send_text(" RESET STATS\r\n> ");
 	}
 	else if (strcmp(command, "LED ON") == 0)
 	{
@@ -461,6 +476,14 @@ static void process_command(const char *command)
 	else if (strcmp(command, "STATUS") == 0)
 	{
 		send_status();
+	}
+	else if (strcmp(command, "STATS") == 0)
+	{
+		send_stats();
+	}
+	else if (strcmp(command, "RESET STATS") == 0)
+	{
+		reset_stats();
 	}
 	else if (strcmp(command, "BLINK OFF") == 0)
 	{
@@ -528,7 +551,7 @@ static void uart_send_text(const char *text)
    * Protect the check, enqueue, and DMA-start operation as one transaction.
    */
   primask = __get_PRIMASK();
-  __disable_irq();;
+  __disable_irq();
 
   if ((uint16_t)len > uart_tx_free_space_locked())
 	  uart_tx_dropped_messages++;
@@ -634,6 +657,39 @@ static void send_status(void) {
 	}
 
 	uart_send_text(response);
+}
+
+static void send_stats(void) {
+	char response[192];
+	uint32_t uptime_ms = HAL_GetTick();
+
+	(void)snprintf(response,
+				   sizeof(response),
+				   "STATS: uptime=%lu ms, RX events=%lu, RX dropped bytes=%lu, RX command overflows=%lu, TX dropped messages=%lu\r\n> ",
+				   (unsigned long)uptime_ms,
+				   (unsigned long)uart_rx_events,
+				   (unsigned long)uart_rx_dropped_byte,
+				   (unsigned long)uart_rx_command_overflows,
+				   (unsigned long)uart_tx_dropped_messages);
+
+	uart_send_text(response);
+}
+
+static void reset_stats(void) {
+	uint32_t primask;
+
+	primask = __get_PRIMASK();
+	__disable_irq();
+
+	uart_rx_events = 0u;
+	uart_rx_dropped_byte = 0u;
+	uart_rx_command_overflows = 0u;
+	uart_tx_dropped_messages = 0u;
+
+	if (primask == 0u) __enable_irq();
+
+	uart_send_text("OK: stats reset\r\n> ");
+
 }
 
 /* USER CODE END 4 */

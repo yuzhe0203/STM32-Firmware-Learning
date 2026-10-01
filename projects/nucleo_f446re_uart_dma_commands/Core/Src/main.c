@@ -157,6 +157,7 @@ static void reset_stats(void);
 static uint32_t config_calculate_checksum(const app_config_t *config);
 static bool config_is_valid(const app_config_t *config);
 static void config_load(void);
+static void send_config(void);
 
 /* USER CODE END PFP */
 
@@ -207,7 +208,7 @@ int main(void)
   last_blink_ms = HAL_GetTick();
 
   uart_send_text("\r\nUART DMA command controller ready\r\n");
-  uart_send_text("Commands: LED ON, LED OFF, STATUS, STATS, RESET STATS, BLINK <100-2000>, BLINK OFF\r\n");
+  uart_send_text("Commands Details, Type 'HELP'\r\n");
   uart_send_text("Config: loaded from flash\r\n> ");
 
   /* USER CODE END 2 */
@@ -480,7 +481,8 @@ static void process_command(const char *command)
 		uart_send_text(" BLINK OFF\r\n");
 		uart_send_text(" STATUS\r\n");
 		uart_send_text(" STATS\r\n");
-		uart_send_text(" RESET STATS\r\n> ");
+		uart_send_text(" RESET STATS\r\n");
+		uart_send_text(" CONFIG SHOW\r\n> ");
 	}
 	else if (strcmp(command, "LED ON") == 0)
 	{
@@ -505,6 +507,10 @@ static void process_command(const char *command)
 	else if (strcmp(command, "RESET STATS") == 0)
 	{
 		reset_stats();
+	}
+	else if (strcmp(command, "CONFIG SHOW") == 0)
+	{
+		send_config();
 	}
 	else if (strcmp(command, "BLINK OFF") == 0)
 	{
@@ -738,6 +744,31 @@ static void config_load(void) {
 		config_loaded_from_flash = true;
 	}
 
+}
+
+static void send_config(void) {
+	char response[128];
+
+	const app_config_t *config = (const app_config_t *)CONFIG_FLASH_ADDRESS;
+
+	if (config_is_valid(config)) {
+		(void)snprintf(response,
+					   sizeof(response),
+					   "Blink Period(Now)=%lu, Blink Period(In Flash)=%lu, Config Loaded From %s\r\n> ",
+					   (unsigned long)blink_period_ms,
+					   (unsigned long)config->blink_period_ms,
+					   config_loaded_from_flash ? "Flash" : "Defaults");
+	}
+	else {
+		(void)snprintf(response,
+					   sizeof(response),
+					   "Blink Period(Now)=%lu, Blink Period(In Flash)=%s, Config Loaded From %s\r\n> ",
+					   (unsigned long)blink_period_ms,
+					   "None",
+					   config_loaded_from_flash ? "Flash" : "Defaults");
+	}
+
+	uart_send_text(response);
 }
 
 /* USER CODE END 4 */

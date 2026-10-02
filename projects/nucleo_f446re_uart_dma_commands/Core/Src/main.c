@@ -159,6 +159,7 @@ static bool config_is_valid(const app_config_t *config);
 static void config_load(void);
 static void send_config(void);
 static bool config_save(void);
+static bool config_erase(void);
 
 /* USER CODE END PFP */
 
@@ -484,7 +485,8 @@ static void process_command(const char *command)
 		uart_send_text(" STATS\r\n");
 		uart_send_text(" RESET STATS\r\n");
 		uart_send_text(" CONFIG SHOW\r\n");
-		uart_send_text(" CONFIG SAVE\r\n> ");
+		uart_send_text(" CONFIG SAVE\r\n");
+		uart_send_text(" CONFIG RESET\r\n> ");
 	}
 	else if (strcmp(command, "LED ON") == 0)
 	{
@@ -520,6 +522,16 @@ static void process_command(const char *command)
 			uart_send_text("OK: config saved\r\n> ");
 		else
 			uart_send_text("ERROR: flash save failed\r\n> ");
+	}
+	else if (strcmp(command, "CONFIG RESET") == 0)
+	{
+		if (config_erase()){
+			blink_period_ms = BLINK_DEFAULT_MS;
+			config_loaded_from_flash = false;
+			uart_send_text("OK: config reset to defaults\r\n> ");
+		}
+		else
+			uart_send_text("ERROR: flash erase failed\r\n> ");
 	}
 	else if (strcmp(command, "BLINK OFF") == 0)
 	{
@@ -821,6 +833,35 @@ static bool config_save(void) {
 	if (status == HAL_OK) {
 		const app_config_t *stored = (const app_config_t *)CONFIG_FLASH_ADDRESS;
 		if (config_is_valid(stored) && memcmp(stored, &new_config, sizeof(app_config_t)) == 0)
+			success = true;
+	}
+
+	return success;
+}
+
+static bool config_erase(void) {
+	bool success = false;
+
+	FLASH_EraseInitTypeDef EraseInitStruct = {0};
+	uint32_t sector_error = 0u;
+	HAL_StatusTypeDef status;
+
+	status = HAL_FLASH_Unlock();
+
+	if (status == HAL_OK) {
+		EraseInitStruct.TypeErase = FLASH_TYPEERASE_SECTORS;
+		EraseInitStruct.Sector = CONFIG_FLASH_SECTOR;
+		EraseInitStruct.NbSectors = 1u;
+		EraseInitStruct.VoltageRange = FLASH_VOLTAGE_RANGE_3;
+
+		status = HAL_FLASHEx_Erase(&EraseInitStruct, &sector_error);
+	}
+
+	HAL_FLASH_Lock();
+
+	if (status == HAL_OK) {
+		const app_config_t *stored = (const app_config_t *)CONFIG_FLASH_ADDRESS;
+		if (!config_is_valid(stored))
 			success = true;
 	}
 

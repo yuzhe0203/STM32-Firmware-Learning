@@ -30,8 +30,8 @@ Build STM32 sensor monitor using:
 - [ ] FreeRTOS
 - [ ] Final sensor-monitor project
 
-Also in progress: persisting configuration to internal Flash
-(`CONFIG SHOW` and `CONFIG SAVE` are working, `CONFIG RESET` is next).
+Also done: persisting configuration to internal Flash
+(`CONFIG SHOW`, `CONFIG SAVE`, and `CONFIG RESET`).
 
 ## Projects
 
@@ -71,6 +71,7 @@ Commands (one per line, LF or CRLF, case-sensitive):
 | `RESET STATS`        | Reset the diagnostic counters (uptime is not reset).                                  |
 | `CONFIG SHOW`        | Show the current blink period and the one stored in Flash.                            |
 | `CONFIG SAVE`        | Save the current blink period to Flash (erase, write, read back, verify).             |
+| `CONFIG RESET`       | Erase the stored configuration and return to the default period (500 ms).             |
 
 Design notes:
 
@@ -82,8 +83,10 @@ Design notes:
   version, and checksum. Invalid or blank data falls back to the default period
   (500 ms). The linker script `FLASH` length is limited to `384K` so program code
   can never overlap Sector 7.
-- Saving erases a whole 128 KB sector, so the CPU is paused for about a second
-  or more while `CONFIG SAVE` runs.
+- Saving and resetting both erase a whole 128 KB sector, so the CPU is paused
+  for about a second or more while `CONFIG SAVE` or `CONFIG RESET` runs.
+  `CONFIG RESET` only erases the sector, since a blank sector already means
+  "no saved configuration".
 
 ## Repository Notes
 

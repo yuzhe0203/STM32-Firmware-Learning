@@ -158,6 +158,7 @@ static uint32_t config_calculate_checksum(const app_config_t *config);
 static bool config_is_valid(const app_config_t *config);
 static void config_load(void);
 static void send_config(void);
+static bool config_save(void);
 
 /* USER CODE END PFP */
 
@@ -209,7 +210,7 @@ int main(void)
 
   uart_send_text("\r\nUART DMA command controller ready\r\n");
   uart_send_text("Commands Details, Type 'HELP'\r\n");
-  uart_send_text("Config: loaded from flash\r\n> ");
+  uart_send_text(config_loaded_from_flash ? "Config: loaded from flash\r\n> " : "Config: using defaults\r\n> ");
 
   /* USER CODE END 2 */
 
@@ -482,7 +483,8 @@ static void process_command(const char *command)
 		uart_send_text(" STATUS\r\n");
 		uart_send_text(" STATS\r\n");
 		uart_send_text(" RESET STATS\r\n");
-		uart_send_text(" CONFIG SHOW\r\n> ");
+		uart_send_text(" CONFIG SHOW\r\n");
+		uart_send_text(" CONFIG SAVE\r\n> ");
 	}
 	else if (strcmp(command, "LED ON") == 0)
 	{
@@ -511,6 +513,13 @@ static void process_command(const char *command)
 	else if (strcmp(command, "CONFIG SHOW") == 0)
 	{
 		send_config();
+	}
+	else if (strcmp(command, "CONFIG SAVE") == 0)
+	{
+		if (config_save())
+			uart_send_text("OK: config saved\r\n> ");
+		else
+			uart_send_text("ERROR: flash save failed\r\n> ");
 	}
 	else if (strcmp(command, "BLINK OFF") == 0)
 	{
@@ -769,6 +778,53 @@ static void send_config(void) {
 	}
 
 	uart_send_text(response);
+}
+
+static bool config_save(void) {
+	app_config_t new_config;
+	bool success = false;
+
+	FLASH_EraseInitTypeDef EraseInitStruct = {0};
+	uint32_t sector_error = 0u;
+	HAL_StatusTypeDef status;
+
+	uint32_t index;
+	const uint32_t *words;
+
+	new_config.magic = CONFIG_MAGIC;
+	new_config.version = CONFIG_VERSION;
+	new_config.blink_period_ms = blink_period_ms;
+	new_config.checksum = config_calculate_checksum(&new_config);
+
+	words = (const uint32_t *)&new_config;
+
+	status = HAL_FLASH_Unlock();
+
+	if (status == HAL_OK) {
+		EraseInitStruct.TypeErase = FLASH_TYPEERASE_SECTORS;
+		EraseInitStruct.Sector = CONFIG_FLASH_SECTOR;
+		EraseInitStruct.NbSectors = 1u;
+		EraseInitStruct.VoltageRange = FLASH_VOLTAGE_RANGE_3;
+
+		status = HAL_FLASHEx_Erase(&EraseInitStruct, &sector_error);
+
+		if (status == HAL_OK) {
+			for (index = 0u; index < (sizeof(app_config_t) / sizeof(uint32_t)); index++) {
+				status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, CONFIG_FLASH_ADDRESS + index*4u, words[index]);
+				if (status != HAL_OK) break;
+			}
+		}
+	}
+
+	HAL_FLASH_Lock();
+
+	if (status == HAL_OK) {
+		const app_config_t *stored = (const app_config_t *)CONFIG_FLASH_ADDRESS;
+		if (config_is_valid(stored) && memcmp(stored, &new_config, sizeof(app_config_t)) == 0)
+			success = true;
+	}
+
+	return success;
 }
 
 /* USER CODE END 4 */

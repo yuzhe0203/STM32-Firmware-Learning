@@ -52,6 +52,10 @@ typedef struct {
 #define BLINK_DEFAULT_MS 500u
 
 #define ADC_DMA_BUFFER_LENGTH 1u
+#define TS_CAL1_ADDRESS 0x1FFF7A2Cu
+#define TS_CAL2_ADDRESS 0x1FFF7A2Eu
+#define TS_CAL1_TEMP_C 30
+#define TS_CAL2_TEMP_C 110
 
 /* USER CODE END PD */
 
@@ -135,7 +139,7 @@ static uint32_t last_blink_ms = 0u;
 
 static bool config_loaded_from_flash = false;
 
-static volatile uint16_t adc_dma_buffer[] = {0};
+static volatile uint16_t adc_dma_buffer[ADC_DMA_BUFFER_LENGTH] = {0};
 static volatile uint32_t adc_sample_count = 0u;
 
 /* USER CODE END PV */
@@ -174,6 +178,7 @@ static bool config_save(void);
 static bool config_erase(void);
 
 static void send_adc(void);
+static int32_t adc_raw_to_temperature_x10(uint16_t raw);
 
 /* USER CODE END PFP */
 
@@ -1002,17 +1007,43 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 }
 
 static void send_adc(void) {
-	char response[64];
+	char response[96];
 	uint16_t raw = adc_dma_buffer[0];
 	uint32_t samples = adc_sample_count;
 
+	int32_t original_t = adc_raw_to_temperature_x10(raw);
+	int32_t abs_t = 0;
+	const char *sign;
+
+	if (original_t < 0) {
+		sign = "-";
+		abs_t = -original_t;
+	}
+	else {
+		sign = "";
+		abs_t = original_t;
+	}
+
 	(void)snprintf(response,
 				   sizeof(response),
-				   "ADC: raw=%lu, samples=%lu\r\n> ",
+				   "ADC: raw=%lu, temp=%s%lu.%lu °C, samples=%lu\r\n> ",
 				   (unsigned long)raw,
+				   sign,
+				   (unsigned long)abs_t / 10,
+				   (unsigned long)abs_t % 10,
 				   (unsigned long)samples);
 
 	uart_send_text(response);
+}
+
+static int32_t adc_raw_to_temperature_x10(uint16_t raw) {
+	int32_t cal1 = *(const uint16_t *)TS_CAL1_ADDRESS;
+	int32_t cal2 = *(const uint16_t *)TS_CAL2_ADDRESS;
+	int32_t raw_s32 = (int32_t)raw;
+
+	if (cal1 == cal2) return 0;
+
+		return TS_CAL1_TEMP_C * 10 + ((TS_CAL2_TEMP_C - TS_CAL1_TEMP_C) * 10) * (raw_s32 - cal1) / (cal2 - cal1);
 }
 
 /* USER CODE END 4 */

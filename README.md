@@ -26,6 +26,7 @@ Build STM32 sensor monitor using:
 - [ ] C bit operations
 - [x] Circular buffer (RX and TX ring buffers in the UART DMA project)
 - [x] UART logging (interrupt-driven and DMA-based command interface)
+- [x] Timer-triggered ADC sampling with DMA (internal temperature sensor)
 - [ ] I2C sensor
 - [ ] FreeRTOS
 - [ ] Final sensor-monitor project
@@ -37,12 +38,13 @@ Also done: persisting configuration to internal Flash
 
 All projects are under `projects/`.
 
-| Project                           | Description                                                                                                                                                                   |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `nucleo_f446re_blink`             | Blink the user LED (`LD2`, `PA5`).                                                                                                                                            |
-| `nucleo_f446re_button_blink`      | Press the user button (`B1`, `PC13`, EXTI) to toggle between slow and fast blinking.                                                                                          |
-| `nucleo_f446re_uart_commands`     | Text command controller over the Virtual COM Port using UART receive interrupt (one byte at a time).                                                                          |
-| `nucleo_f446re_uart_dma_commands` | Current main project. UART command controller built on circular RX DMA and a queued TX DMA, with a non-blocking blink scheduler, diagnostics, and Flash-backed configuration. |
+| Project                           | Description                                                                                                                                                      |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `nucleo_f446re_blink`             | Blink the user LED (`LD2`, `PA5`).                                                                                                                               |
+| `nucleo_f446re_button_blink`      | Press the user button (`B1`, `PC13`, EXTI) to toggle between slow and fast blinking.                                                                             |
+| `nucleo_f446re_uart_commands`     | Text command controller over the Virtual COM Port using UART receive interrupt (one byte at a time).                                                             |
+| `nucleo_f446re_uart_dma_commands` | UART command controller built on circular RX DMA and a queued TX DMA, with a non-blocking blink scheduler, diagnostics, and Flash-backed configuration.          |
+| `nucleo_f446re_adc_sampling`      | Current main project. Copy of the UART DMA project plus periodic ADC sampling of the internal temperature sensor (TIM2 trigger, ADC1, DMA) and an `ADC` command. |
 
 ### `nucleo_f446re_uart_dma_commands`
 
@@ -87,6 +89,48 @@ Design notes:
   for about a second or more while `CONFIG SAVE` or `CONFIG RESET` runs.
   `CONFIG RESET` only erases the sector, since a blank sector already means
   "no saved configuration".
+
+### `nucleo_f446re_adc_sampling`
+
+Starts from the UART DMA project, so all of its commands and the Flash-backed
+configuration are still available. It adds periodic sampling of the internal
+temperature sensor.
+
+Sampling path:
+
+```text
+TIM2 update event (10 Hz)
+-> TRGO triggers one ADC1 conversion (temperature sensor channel)
+-> ADC1 DMA (circular, half-word) writes the result to RAM
+-> conversion-complete callback increments a sample counter
+-> main loop reads the latest value when asked
+```
+
+Additional command:
+
+| Command | Description                                                                                              |
+| ------- | -------------------------------------------------------------------------------------------------------- |
+| `ADC`   | Show the latest raw ADC value, the temperature in degrees C, and the number of samples taken since boot. |
+
+Design notes:
+
+- The sampling time is set by a hardware timer, so it does not depend on how
+  busy the main loop is. TIM2 runs from an 84 MHz timer clock with
+  prescaler 8399 and period 999, which gives 10 Hz.
+- The ADC sampling time is 480 cycles at a 21 MHz ADC clock (about 23 us),
+  longer than the minimum the datasheet requires for the temperature sensor.
+- Temperature is computed with integer math in units of 0.1 degree C, using the
+  factory calibration values stored in the MCU (two-point linear interpolation).
+  Floating point is avoided because `printf` float support is off by default in
+  newlib-nano.
+- Output text is plain ASCII. A non-ASCII degree sign showed up as `??` in the
+  serial terminal.
+- The internal sensor measures the chip temperature, which is usually a few
+  degrees above room temperature. It is used to learn the sampling pipeline,
+  not as the final sensor.
+- The sample counter can fall slightly behind during `CONFIG SAVE` and
+  `CONFIG RESET`, because the CPU is paused during Flash erase and the
+  conversion-complete callback runs late. The DMA itself keeps running.
 
 ## Repository Notes
 

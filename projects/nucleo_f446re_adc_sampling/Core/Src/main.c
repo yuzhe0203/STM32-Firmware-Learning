@@ -37,8 +37,11 @@ typedef struct {
 	uint32_t magic;
 	uint32_t version;
 	uint32_t blink_period_ms;
+	uint32_t sample_period_ms;
 	uint32_t checksum;
 } app_config_t;
+
+_Static_assert(sizeof(app_config_t) == 20, "app_config_t size changed, check Flash layout and checksum range");
 
 /* USER CODE END PTD */
 
@@ -48,7 +51,7 @@ typedef struct {
 #define CONFIG_FLASH_ADDRESS 0x08060000u
 #define CONFIG_FLASH_SECTOR FLASH_SECTOR_7
 #define CONFIG_MAGIC 0x20040203u
-#define CONFIG_VERSION 1u
+#define CONFIG_VERSION 2u
 #define BLINK_DEFAULT_MS 500u
 
 #define ADC_DMA_BUFFER_LENGTH 1u
@@ -56,6 +59,17 @@ typedef struct {
 #define TS_CAL2_ADDRESS 0x1FFF7A2Eu
 #define TS_CAL1_TEMP_C 30
 #define TS_CAL2_TEMP_C 110
+
+#define SAMPLE_MIN_PERIOD_MS 100u
+#define SAMPLE_MAX_PERIOD_MS 10000u
+#define SAMPLE_DEFAULT_PERIOD_MS 100u
+/*
+ * Depends on TIM Prescaler = 8399 and Timer clock = 84 MHz.
+ * 84 MHz / (8399 + 1) = 10 kHz, so 1 ms = 10 ticks.
+ * This value is NOT updated automatically. If the Prescaler or the
+ * clock tree is changed in CubeMX, recalculate and update it manually.
+ */
+#define TIM_TICKS_PER_MS 10u
 
 /* USER CODE END PD */
 
@@ -102,7 +116,7 @@ static uint8_t uart_last_was_cr = 0u;
 
 static bool led_is_on = false;
 
-#define UART_TX_RING_CAPACITY 256u
+#define UART_TX_RING_CAPACITY 512u
 
 /*
  *
@@ -142,6 +156,8 @@ static bool config_loaded_from_flash = false;
 static volatile uint16_t adc_dma_buffer[ADC_DMA_BUFFER_LENGTH] = {0};
 static volatile uint32_t adc_sample_count = 0u;
 
+static uint32_t sample_period_ms = SAMPLE_DEFAULT_PERIOD_MS;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -179,6 +195,8 @@ static bool config_erase(void);
 
 static void send_adc(void);
 static int32_t adc_raw_to_temperature_x10(uint16_t raw);
+
+static void sample_apply_period(uint32_t ms);
 
 /* USER CODE END PFP */
 
@@ -230,6 +248,8 @@ int main(void)
 
   if (HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_dma_buffer, ADC_DMA_BUFFER_LENGTH) != HAL_OK)
 	  Error_Handler();
+
+  sample_apply_period(sample_period_ms);
 
   if (HAL_TIM_Base_Start(&htim2) != HAL_OK)
 	  Error_Handler();
@@ -615,7 +635,8 @@ static void process_command(const char *command)
 		uart_send_text(" CONFIG SHOW\r\n");
 		uart_send_text(" CONFIG SAVE\r\n");
 		uart_send_text(" CONFIG RESET\r\n");
-		uart_send_text(" ADC\r\n> ");
+		uart_send_text(" ADC\r\n");
+		uart_send_text(" SAMPLE <100-10000>\r\n> ");
 	}
 	else if (strcmp(command, "LED ON") == 0)
 	{
@@ -657,6 +678,8 @@ static void process_command(const char *command)
 		if (config_erase()){
 			blink_period_ms = BLINK_DEFAULT_MS;
 			config_loaded_from_flash = false;
+			sample_period_ms = SAMPLE_DEFAULT_PERIOD_MS;
+			sample_apply_period(sample_period_ms);
 			uart_send_text("OK: config reset to defaults\r\n> ");
 		}
 		else
@@ -686,6 +709,21 @@ static void process_command(const char *command)
 		blink_enable = true;
 
 		uart_send_text("OK: blink enable\r\n> ");
+	}
+	else if(strncmp(command, "SAMPLE ", 7u) == 0) {
+		requested_period = strtoul(&command[7], &end_ptr, 10);
+
+		if ((*end_ptr != '\0') || (requested_period < SAMPLE_MIN_PERIOD_MS) || (requested_period > SAMPLE_MAX_PERIOD_MS))
+		{
+			uart_send_text("ERROR: use SAMPLE <100-10000>\r\n> ");
+			return;
+		}
+		else
+		{
+			sample_period_ms = requested_period;
+			sample_apply_period(requested_period);
+			uart_send_text("OK: Sample Applied\r\n> ");
+		}
 	}
 	else if (command[0] == '\0')
 	{
@@ -874,7 +912,7 @@ static void reset_stats(void) {
 }
 
 static uint32_t config_calculate_checksum(const app_config_t *config) {
-	return config->magic ^ config->blink_period_ms ^ config->version ^ 930203u;
+	return config->magic ^ config->blink_period_ms ^ config->version ^ config->sample_period_ms ^ 930203u;
 }
 
 static bool config_is_valid(const app_config_t *config) {
@@ -886,6 +924,8 @@ static bool config_is_valid(const app_config_t *config) {
 		return false;
 	else if (config->blink_period_ms > BLINK_MAX_PERIOD_MS || config->blink_period_ms < BLINK_MIN_PERIOD_MS)
 		return false;
+	else if (config->sample_period_ms > SAMPLE_MAX_PERIOD_MS || config->sample_period_ms < SAMPLE_MIN_PERIOD_MS)
+		return false;
 	else
 		return true;
 }
@@ -895,29 +935,34 @@ static void config_load(void) {
 
 	if (config_is_valid(config)) {
 		blink_period_ms = config->blink_period_ms;
+		sample_period_ms = config->sample_period_ms;
 		config_loaded_from_flash = true;
 	}
 
 }
 
 static void send_config(void) {
-	char response[128];
+	char response[192];
 
 	const app_config_t *config = (const app_config_t *)CONFIG_FLASH_ADDRESS;
 
 	if (config_is_valid(config)) {
 		(void)snprintf(response,
 					   sizeof(response),
-					   "Blink Period(Now)=%lu, Blink Period(In Flash)=%lu, Config Loaded From %s\r\n> ",
+					   "Blink(Now)=%lu, Blink(In Flash)=%lu, Sample(Now)=%lu, Sample(In Flash)=%lu, Config Loaded From %s\r\n> ",
 					   (unsigned long)blink_period_ms,
 					   (unsigned long)config->blink_period_ms,
+					   (unsigned long)sample_period_ms,
+					   (unsigned long)config->sample_period_ms,
 					   config_loaded_from_flash ? "Flash" : "Defaults");
 	}
 	else {
 		(void)snprintf(response,
 					   sizeof(response),
-					   "Blink Period(Now)=%lu, Blink Period(In Flash)=%s, Config Loaded From %s\r\n> ",
+					   "Blink(Now)=%lu, Blink(In Flash)=%s, Sample(Now)=%lu, Sample(In Flash)=%s, Config Loaded From %s\r\n> ",
 					   (unsigned long)blink_period_ms,
+					   "None",
+					   (unsigned long)sample_period_ms,
 					   "None",
 					   config_loaded_from_flash ? "Flash" : "Defaults");
 	}
@@ -939,6 +984,7 @@ static bool config_save(void) {
 	new_config.magic = CONFIG_MAGIC;
 	new_config.version = CONFIG_VERSION;
 	new_config.blink_period_ms = blink_period_ms;
+	new_config.sample_period_ms = sample_period_ms;
 	new_config.checksum = config_calculate_checksum(&new_config);
 
 	words = (const uint32_t *)&new_config;
@@ -1026,7 +1072,7 @@ static void send_adc(void) {
 
 	(void)snprintf(response,
 				   sizeof(response),
-				   "ADC: raw=%lu, temp=%s%lu.%lu °C, samples=%lu\r\n> ",
+				   "ADC: raw=%lu, temp=%s%lu.%lu degC, samples=%lu\r\n> ",
 				   (unsigned long)raw,
 				   sign,
 				   (unsigned long)abs_t / 10,
@@ -1044,6 +1090,14 @@ static int32_t adc_raw_to_temperature_x10(uint16_t raw) {
 	if (cal1 == cal2) return 0;
 
 		return TS_CAL1_TEMP_C * 10 + ((TS_CAL2_TEMP_C - TS_CAL1_TEMP_C) * 10) * (raw_s32 - cal1) / (cal2 - cal1);
+}
+
+static void sample_apply_period(uint32_t ms) {
+	uint32_t arr = (ms * TIM_TICKS_PER_MS) - 1;
+
+	__HAL_TIM_SET_AUTORELOAD(&htim2, arr);
+
+	__HAL_TIM_SET_COUNTER(&htim2, 0u);
 }
 
 /* USER CODE END 4 */

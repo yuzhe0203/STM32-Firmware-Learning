@@ -32,19 +32,20 @@ Build STM32 sensor monitor using:
 - [ ] Final sensor-monitor project
 
 Also done: persisting configuration to internal Flash
-(`CONFIG SHOW`, `CONFIG SAVE`, and `CONFIG RESET`).
+(`CONFIG SHOW`, `CONFIG SAVE`, and `CONFIG RESET`), including the blink period
+and the ADC sampling period.
 
 ## Projects
 
 All projects are under `projects/`.
 
-| Project                           | Description                                                                                                                                                      |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `nucleo_f446re_blink`             | Blink the user LED (`LD2`, `PA5`).                                                                                                                               |
-| `nucleo_f446re_button_blink`      | Press the user button (`B1`, `PC13`, EXTI) to toggle between slow and fast blinking.                                                                             |
-| `nucleo_f446re_uart_commands`     | Text command controller over the Virtual COM Port using UART receive interrupt (one byte at a time).                                                             |
-| `nucleo_f446re_uart_dma_commands` | UART command controller built on circular RX DMA and a queued TX DMA, with a non-blocking blink scheduler, diagnostics, and Flash-backed configuration.          |
-| `nucleo_f446re_adc_sampling`      | Current main project. Copy of the UART DMA project plus periodic ADC sampling of the internal temperature sensor (TIM2 trigger, ADC1, DMA) and an `ADC` command. |
+| Project                           | Description                                                                                                                                                                                                            |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `nucleo_f446re_blink`             | Blink the user LED (`LD2`, `PA5`).                                                                                                                                                                                     |
+| `nucleo_f446re_button_blink`      | Press the user button (`B1`, `PC13`, EXTI) to toggle between slow and fast blinking.                                                                                                                                   |
+| `nucleo_f446re_uart_commands`     | Text command controller over the Virtual COM Port using UART receive interrupt (one byte at a time).                                                                                                                   |
+| `nucleo_f446re_uart_dma_commands` | UART command controller built on circular RX DMA and a queued TX DMA, with a non-blocking blink scheduler, diagnostics, and Flash-backed configuration.                                                                |
+| `nucleo_f446re_adc_sampling`      | Current main project. Copy of the UART DMA project plus periodic ADC sampling of the internal temperature sensor (TIM2 trigger, ADC1, DMA), an `ADC` command, and a runtime-adjustable sampling period saved in Flash. |
 
 ### `nucleo_f446re_uart_dma_commands`
 
@@ -99,24 +100,38 @@ temperature sensor.
 Sampling path:
 
 ```text
-TIM2 update event (10 Hz)
+TIM2 update event (default 10 Hz, set by SAMPLE)
 -> TRGO triggers one ADC1 conversion (temperature sensor channel)
 -> ADC1 DMA (circular, half-word) writes the result to RAM
 -> conversion-complete callback increments a sample counter
 -> main loop reads the latest value when asked
 ```
 
-Additional command:
+Additional and changed commands:
 
-| Command | Description                                                                                              |
-| ------- | -------------------------------------------------------------------------------------------------------- |
-| `ADC`   | Show the latest raw ADC value, the temperature in degrees C, and the number of samples taken since boot. |
+| Command              | Description                                                                                              |
+| -------------------- | -------------------------------------------------------------------------------------------------------- |
+| `ADC`                | Show the latest raw ADC value, the temperature in degrees C, and the number of samples taken since boot. |
+| `SAMPLE <100-10000>` | Set the sampling period in ms. Takes effect immediately.                                                 |
+| `CONFIG SHOW`        | Show the current and stored values of both the blink period and the sampling period.                     |
+| `CONFIG SAVE`        | Save both periods to Flash.                                                                              |
+| `CONFIG RESET`       | Erase the stored configuration and return to the defaults (blink 500 ms, sampling 100 ms).               |
 
 Design notes:
 
 - The sampling time is set by a hardware timer, so it does not depend on how
   busy the main loop is. TIM2 runs from an 84 MHz timer clock with
-  prescaler 8399 and period 999, which gives 10 Hz.
+  prescaler 8399, so it counts at 10 kHz (10 ticks per ms). The default
+  period 999 gives 10 Hz.
+- `SAMPLE` writes the auto-reload register as `ms * 10 - 1` and then resets
+  the counter to 0. Auto-reload preload is off, so without the reset the
+  counter could already be past a new, smaller limit and would run until the
+  32-bit counter wraps, which would stop sampling for days.
+- The configuration is now version 2 and also stores the sampling period.
+  Version 1 data in Flash fails validation and the defaults are used, which is
+  the intended upgrade behavior. The stored period is applied to TIM2 at boot
+  before the timer starts, and `CONFIG RESET` applies the default to TIM2
+  right away.
 - The ADC sampling time is 480 cycles at a 21 MHz ADC clock (about 23 us),
   longer than the minimum the datasheet requires for the temperature sensor.
 - Temperature is computed with integer math in units of 0.1 degree C, using the

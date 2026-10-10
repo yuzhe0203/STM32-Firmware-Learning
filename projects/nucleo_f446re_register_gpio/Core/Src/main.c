@@ -32,6 +32,9 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+#define LED_PIN 5u
+#define BUTTON_PIN 13u
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -49,6 +52,8 @@
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 /* USER CODE BEGIN PFP */
+
+static void gpio_register_init(void);
 
 /* USER CODE END PFP */
 
@@ -88,6 +93,8 @@ int main(void)
   MX_GPIO_Init();
   /* USER CODE BEGIN 2 */
 
+  gpio_register_init();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -97,6 +104,12 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+	  if ((GPIOC->IDR & (1u << BUTTON_PIN)) == 0)
+		  GPIOA->BSRR |= (1u << LED_PIN);
+	  else
+		  GPIOA->BSRR |= (1u << (LED_PIN + 16));
+
   }
   /* USER CODE END 3 */
 }
@@ -162,6 +175,18 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+static void gpio_register_init(void) {
+	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOCEN;
+
+	volatile uint32_t dummy_read = RCC->AHB1ENR;
+	(void)dummy_read;
+
+	GPIOA->MODER &= ~(3u << (LED_PIN*2));
+	GPIOA->MODER |= (1u << (LED_PIN*2));
+
+	GPIOC->MODER &= ~(3u << (BUTTON_PIN*2));
+}
 
 /* USER CODE END 4 */
 

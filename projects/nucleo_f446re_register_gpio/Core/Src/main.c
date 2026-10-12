@@ -32,8 +32,14 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define LED_PIN 5u
+#define LED_PIN_PA5 5u
+#define LED_PIN_PB12 12u
 #define BUTTON_PIN 13u
+#define BUTTON_ADD 1u
+#define BUTTON_SUB 2u
+
+#define LED_SHOW_MS 500u
+#define BUTTON_SAMPLE_MS 20u
 
 /* USER CODE END PD */
 
@@ -46,6 +52,11 @@
 
 /* USER CODE BEGIN PV */
 
+static uint8_t value = 0u;
+static uint32_t last_button_tick = 0u;
+static uint32_t addBtn_last = 1u;
+static uint32_t subBtn_last = 1u;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -54,6 +65,8 @@ static void MX_GPIO_Init(void);
 /* USER CODE BEGIN PFP */
 
 static void gpio_register_init(void);
+static void leds_show(uint32_t value);
+static void run_button_task(void);
 
 /* USER CODE END PFP */
 
@@ -105,11 +118,14 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	  if ((GPIOC->IDR & (1u << BUTTON_PIN)) == 0)
-		  GPIOA->BSRR |= (1u << LED_PIN);
-	  else
-		  GPIOA->BSRR |= (1u << (LED_PIN + 16));
+	  if ((GPIOC->IDR & (1u << BUTTON_PIN)) == 0){
+		  GPIOA->BSRR = (1u << LED_PIN_PA5);
+	  }
+	  else {
+		  GPIOA->BSRR = (1u << (LED_PIN_PA5 + 16));
+	  }
 
+	  run_button_task();
   }
   /* USER CODE END 3 */
 }
@@ -177,15 +193,45 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 static void gpio_register_init(void) {
-	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOCEN;
+	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOBEN | RCC_AHB1ENR_GPIOCEN;
 
 	volatile uint32_t dummy_read = RCC->AHB1ENR;
 	(void)dummy_read;
 
-	GPIOA->MODER &= ~(3u << (LED_PIN*2));
-	GPIOA->MODER |= (1u << (LED_PIN*2));
+	GPIOA->MODER &= ~(3u << (LED_PIN_PA5*2));
+	GPIOA->MODER |= (1u << (LED_PIN_PA5*2));
+
+	GPIOB->MODER &= ~(0xFF00003Cu); //PB1, PB2, PB12-15
+	GPIOB->MODER |= (0x55u << (LED_PIN_PB12*2)); //PB12-15
+	GPIOB->PUPDR |= 0x14u; //PB1-2
 
 	GPIOC->MODER &= ~(3u << (BUTTON_PIN*2));
+}
+
+static void leds_show(uint32_t value) {
+	GPIOB->BSRR = (value << LED_PIN_PB12); // ON
+	GPIOB->BSRR = ((~value & 0xFu) << (LED_PIN_PB12 + 16)); //OFF
+}
+
+static void run_button_task(void) {
+	uint32_t now_ms = HAL_GetTick();
+
+	if ((now_ms - last_button_tick) < BUTTON_SAMPLE_MS) return;
+	last_button_tick = now_ms;
+
+	uint32_t idr = GPIOB->IDR;
+	uint32_t addBtn = (idr >> BUTTON_ADD) & 1u;
+	uint32_t subBtn = (idr >> BUTTON_SUB) & 1u;
+
+	if (addBtn_last == 1u && addBtn == 0u)
+		value = (value + 1u) & 0xFu;
+	if (subBtn_last == 1u && subBtn == 0u)
+		value = (value - 1u) & 0xFu;
+
+	addBtn_last = addBtn;
+	subBtn_last = subBtn;
+
+	leds_show(value);
 }
 
 /* USER CODE END 4 */

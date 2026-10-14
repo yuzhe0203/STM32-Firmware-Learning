@@ -107,23 +107,19 @@ const osThreadAttr_t blinkTask_attributes = {
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for uartRxQueue */
+osMessageQueueId_t uartRxQueueHandle;
+const osMessageQueueAttr_t uartRxQueue_attributes = {
+  .name = "uartRxQueue"
+};
 /* USER CODE BEGIN PV */
 
 #define UART_DMA_RX_CAPACITY 64u
-#define UART_RING_CAPACITY 128u
 #define UART_COMMAND_CAPACITY 32u
 
 static uint8_t uart_dma_rx[UART_DMA_RX_CAPACITY];
 static volatile uint16_t uart_dma_last_position = 0u;
 
-/*
- *
- * DMA callback is the producer; the main loop is the consumer.
- * One slot remains unused so head == tail unambiguously means empty.
- */
-static uint8_t uart_ring[UART_RING_CAPACITY];
-static volatile uint16_t uart_ring_head = 0u;
-static volatile uint16_t uart_ring_tail = 0u;
 static volatile uint8_t uart_ring_overflow = 0u;
 
 static char uart_command[UART_COMMAND_CAPACITY];
@@ -195,7 +191,6 @@ static void process_command(const char *command);
 static void process_uart_byte(uint8_t byte);
 
 static void uart_ring_push(uint8_t byte);
-static bool uart_ring_pop(uint8_t *byte);
 
 static void uart_tx_kick_locked(void);
 static uint16_t uart_tx_free_space_locked(void);
@@ -295,6 +290,10 @@ int main(void)
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
+
+  /* Create the queue(s) */
+  /* creation of uartRxQueue */
+  uartRxQueueHandle = osMessageQueueNew (128, sizeof(uint8_t), &uartRxQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -568,11 +567,6 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size) {
 
 	uart_rx_events++;
 
-	/*
-	 *
-	 * In circular DMA mode, `size` is the current position in the DMA
-	 * buffer. At transmfer_complete it can equal UART_DMA_RX_CAPACITY.
-	 */
 	new_position = (uint16_t)(size % UART_DMA_RX_CAPACITY);
 
 	if (new_position > uart_dma_last_position) {
@@ -592,30 +586,11 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size) {
 
 static void uart_ring_push(uint8_t byte)
 {
-  uint16_t next_head = (uint16_t)((uart_ring_head + 1u) % UART_RING_CAPACITY);
-
-  if (next_head == uart_ring_tail)
-  {
-    uart_ring_overflow = 1u;
-    uart_rx_dropped_byte++;
-    return;
+  if (osMessageQueuePut(uartRxQueueHandle, &byte, 0, 0) != osOK) {
+	  uart_ring_overflow = 1u;
+	  uart_rx_dropped_byte++;
   }
 
-  uart_ring[uart_ring_head] = byte;
-  uart_ring_head = next_head;
-}
-
-static bool uart_ring_pop(uint8_t *byte)
-{
-  if (uart_ring_tail == uart_ring_head)
-  {
-    return false;
-  }
-
-  *byte = uart_ring[uart_ring_tail];
-  uart_ring_tail = (uint16_t)((uart_ring_tail + 1u) % UART_RING_CAPACITY);
-
-  return true;
 }
 
 static void process_uart_byte(uint8_t byte)
@@ -1147,21 +1122,19 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
+  uint8_t byte;
   for(;;)
   {
-	  uint8_t byte;
+	  if (osMessageQueueGet(uartRxQueueHandle, &byte, NULL, osWaitForever) == osOK) {
+		  if (uart_ring_overflow != 0u) {
+		  	uart_ring_overflow = 0u;
+		  	uart_command_len = 0u;
+		  	uart_discard_command = 1u;
+		  	uart_send_text("ERROR: receive buffer overflow\r\n> ");
+		  }
 
-	  if (uart_ring_overflow != 0u) {
-	  	uart_ring_overflow = 0u;
-	  	uart_command_len = 0u;
-	  	uart_discard_command = 1u;
-	  	uart_send_text("ERROR: receive buffer overflow\r\n> ");
+		  process_uart_byte(byte);
 	  }
-
-	  while (uart_ring_pop(&byte)) {
-	  	process_uart_byte(byte);
-	  }
-	  osDelay(1);
   }
   /* USER CODE END 5 */
 }

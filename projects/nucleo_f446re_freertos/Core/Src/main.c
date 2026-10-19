@@ -74,6 +74,10 @@ _Static_assert(sizeof(app_config_t) == 20, "app_config_t size changed, check Fla
  */
 #define TIM_TICKS_PER_MS 10u
 
+#define SENSOR_FLAG_NEW_SAMPLE 0x01u
+#define TEMP_AVG_LENGTH 8u
+#define SENSOR_TIMEOUT_MS SAMPLE_MAX_PERIOD_MS * 2u
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -104,6 +108,13 @@ const osThreadAttr_t defaultTask_attributes = {
 osThreadId_t blinkTaskHandle;
 const osThreadAttr_t blinkTask_attributes = {
   .name = "blinkTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for sensorTask */
+osThreadId_t sensorTaskHandle;
+const osThreadAttr_t sensorTask_attributes = {
+  .name = "sensorTask",
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
@@ -171,6 +182,13 @@ static volatile uint32_t adc_sample_count = 0u;
 
 static uint32_t sample_period_ms = SAMPLE_DEFAULT_PERIOD_MS;
 
+static uint16_t sensor_raw;
+static int32_t sensor_temp_x10;
+static int32_t sensor_avg_x10;
+static uint32_t sensor_processed_count;
+static uint32_t sensor_timeout_count;
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -182,6 +200,7 @@ static void MX_ADC1_Init(void);
 static void MX_TIM2_Init(void);
 void StartDefaultTask(void *argument);
 void StartBlinkTask(void *argument);
+void StartSensorTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -207,10 +226,13 @@ static void send_config(void);
 static bool config_save(void);
 static bool config_erase(void);
 
+static void split_temp_x10(int32_t t, const char **sign, uint32_t *int_part, uint32_t *frac_part);
 static void send_adc(void);
 static int32_t adc_raw_to_temperature_x10(uint16_t raw);
 
 static void sample_apply_period(uint32_t ms);
+
+
 
 /* USER CODE END PFP */
 
@@ -265,9 +287,6 @@ int main(void)
 
   sample_apply_period(sample_period_ms);
 
-  if (HAL_TIM_Base_Start(&htim2) != HAL_OK)
-	  Error_Handler();
-
   last_blink_ms = HAL_GetTick();
 
   uart_send_text("\r\nUART DMA command controller ready\r\n");
@@ -305,6 +324,9 @@ int main(void)
 
   /* creation of blinkTask */
   blinkTaskHandle = osThreadNew(StartBlinkTask, NULL, &blinkTask_attributes);
+
+  /* creation of sensorTask */
+  sensorTaskHandle = osThreadNew(StartSensorTask, NULL, &sensorTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -1057,35 +1079,40 @@ static bool config_erase(void) {
 }
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
-	if (hadc->Instance == ADC1)
+	if (hadc->Instance == ADC1) {
 		adc_sample_count++;
+		osThreadFlagsSet(sensorTaskHandle, SENSOR_FLAG_NEW_SAMPLE);
+	}
 }
 
 static void send_adc(void) {
-	char response[96];
-	uint16_t raw = adc_dma_buffer[0];
+	char response[128];
+	uint16_t raw = sensor_raw;
 	uint32_t samples = adc_sample_count;
 
-	int32_t original_t = adc_raw_to_temperature_x10(raw);
-	int32_t abs_t = 0;
-	const char *sign;
+	int32_t t = sensor_temp_x10;
+	const char *t_sign;
+	uint32_t t_int = t / 10;
+	uint32_t t_frac = t % 10;
 
-	if (original_t < 0) {
-		sign = "-";
-		abs_t = -original_t;
-	}
-	else {
-		sign = "";
-		abs_t = original_t;
-	}
+	int32_t avg = sensor_avg_x10;
+	const char *avg_sign;
+	uint32_t avg_int = avg / 10;
+	uint32_t avg_frac = avg % 10;
+
+	split_temp_x10(t, &t_sign, &t_int, &t_frac);
+	split_temp_x10(avg, &avg_sign, &avg_int, &avg_frac);
 
 	(void)snprintf(response,
 				   sizeof(response),
-				   "ADC: raw=%lu, temp=%s%lu.%lu degC, samples=%lu\r\n> ",
+				   "ADC: raw=%lu, temp=%s%lu.%lu degC, avg=%s%lu.%lu degC, samples=%lu\r\n> ",
 				   (unsigned long)raw,
-				   sign,
-				   (unsigned long)abs_t / 10,
-				   (unsigned long)abs_t % 10,
+				   t_sign,
+				   (unsigned long)t_int,
+				   (unsigned long)t_frac,
+				   avg_sign,
+				   (unsigned long)avg_int,
+				   (unsigned long)avg_frac,
 				   (unsigned long)samples);
 
 	uart_send_text(response);
@@ -1107,6 +1134,22 @@ static void sample_apply_period(uint32_t ms) {
 	__HAL_TIM_SET_AUTORELOAD(&htim2, arr);
 
 	__HAL_TIM_SET_COUNTER(&htim2, 0u);
+}
+
+static void split_temp_x10(int32_t t, const char **sign, uint32_t *int_part, uint32_t *frac_part) {
+	uint32_t abs_t;
+
+	if (t < 0) {
+		*sign = "-";
+		abs_t = -t;
+	}
+	else {
+		*sign = "";
+		abs_t = t;
+	}
+
+	*int_part = abs_t / 10;
+	*frac_part = abs_t % 10;
 }
 
 /* USER CODE END 4 */
@@ -1159,9 +1202,59 @@ void StartBlinkTask(void *argument)
 	  else {
 	  	osThreadFlagsWait(BLINK_FLAG_UPDATE, osFlagsWaitAny, osWaitForever);
 	  }
-	  osDelay(1);
   }
   /* USER CODE END StartBlinkTask */
+}
+
+/* USER CODE BEGIN Header_StartSensorTask */
+/**
+* @brief Function implementing the sensorTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartSensorTask */
+void StartSensorTask(void *argument)
+{
+  /* USER CODE BEGIN StartSensorTask */
+  /* Infinite loop */
+
+	int32_t temp_avg[TEMP_AVG_LENGTH] = {0};
+	uint32_t current = 0u;
+	uint32_t filled_cnt = 0u;
+	int32_t sum	= 0;
+	uint32_t flag = 0u;
+
+	if (HAL_TIM_Base_Start(&htim2) != HAL_OK){
+		Error_Handler();
+	}
+
+  for(;;)
+  {
+	  flag = osThreadFlagsWait(SENSOR_FLAG_NEW_SAMPLE, osFlagsWaitAny, SENSOR_TIMEOUT_MS);
+
+	  if ((flag & osFlagsError) != 0u) {
+		  sensor_timeout_count++;
+		  continue;
+	  }
+	  else {
+		  uint16_t raw = adc_dma_buffer[0];
+		  int32_t temp = adc_raw_to_temperature_x10(raw);
+		  sum -= temp_avg[current];
+		  sum += temp;
+		  temp_avg[current] = temp;
+		  current = (current + 1u) & (TEMP_AVG_LENGTH - 1u);
+
+		  if (filled_cnt < TEMP_AVG_LENGTH){
+			  filled_cnt++;
+		  }
+
+		  sensor_raw = raw;
+		  sensor_temp_x10 = temp;
+		  sensor_avg_x10 = sum / (int32_t)filled_cnt;
+		  sensor_processed_count++;
+	  }
+  }
+  /* USER CODE END StartSensorTask */
 }
 
 /**

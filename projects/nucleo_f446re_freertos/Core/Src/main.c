@@ -42,6 +42,14 @@ typedef struct {
 	uint32_t checksum;
 } app_config_t;
 
+typedef struct {
+	uint16_t raw;
+	int32_t temp_x10;
+	int32_t avg_x10;
+	uint32_t processed;
+	uint32_t timeouts;
+} sensor_snapshot_t;
+
 _Static_assert(sizeof(app_config_t) == 20, "app_config_t size changed, check Flash layout and checksum range");
 
 /* USER CODE END PTD */
@@ -123,6 +131,11 @@ osMessageQueueId_t uartRxQueueHandle;
 const osMessageQueueAttr_t uartRxQueue_attributes = {
   .name = "uartRxQueue"
 };
+/* Definitions for sensorMutex */
+osMutexId_t sensorMutexHandle;
+const osMutexAttr_t sensorMutex_attributes = {
+  .name = "sensorMutex"
+};
 /* USER CODE BEGIN PV */
 
 #define UART_DMA_RX_CAPACITY 64u
@@ -142,13 +155,6 @@ static bool led_is_on = false;
 
 #define UART_TX_RING_CAPACITY 512u
 
-/*
- *
- * Main loop produces response text.
- * UART TX-complete callback consumes transmitted bytes.
- *
- * One byte remains unused so head == tail always means empty.
- */
 static uint8_t uart_tx_ring[UART_TX_RING_CAPACITY];
 static volatile uint16_t uart_tx_head = 0u;
 static volatile uint16_t uart_tx_tail = 0u;
@@ -156,13 +162,6 @@ static volatile uint16_t uart_tx_tail = 0u;
 static volatile uint16_t uart_tx_dma_len = 0u;
 static volatile uint8_t uart_tx_dma_active = 0u;
 
-/*
- *
- * Overflow policy
- *  - Do not partially enqueue a message.
- *  - Drop the newest entire message if there is insufficient space.
- *  - Count Dropped messages for debugging.
- */
 static volatile uint32_t uart_tx_dropped_messages = 0u;
 static volatile uint32_t uart_rx_events = 0u;
 static volatile uint32_t uart_rx_dropped_byte = 0u;
@@ -182,12 +181,7 @@ static volatile uint32_t adc_sample_count = 0u;
 
 static uint32_t sample_period_ms = SAMPLE_DEFAULT_PERIOD_MS;
 
-static uint16_t sensor_raw;
-static int32_t sensor_temp_x10;
-static int32_t sensor_avg_x10;
-static uint32_t sensor_processed_count;
-static uint32_t sensor_timeout_count;
-
+static sensor_snapshot_t sensor_snapshot = {0};
 
 /* USER CODE END PV */
 
@@ -231,6 +225,8 @@ static void send_adc(void);
 static int32_t adc_raw_to_temperature_x10(uint16_t raw);
 
 static void sample_apply_period(uint32_t ms);
+
+static void sensor_publish(const sensor_snapshot_t *s);
 
 
 
@@ -297,6 +293,9 @@ int main(void)
 
   /* Init scheduler */
   osKernelInitialize();
+  /* Create the mutex(es) */
+  /* creation of sensorMutex */
+  sensorMutexHandle = osMutexNew(&sensorMutex_attributes);
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -1086,26 +1085,32 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 }
 
 static void send_adc(void) {
-	char response[128];
-	uint16_t raw = sensor_raw;
+	char response[160];
+
+	sensor_snapshot_t send_data = {0};
+	send_data = sensor_snapshot;
+
+	uint16_t raw = send_data.raw;
 	uint32_t samples = adc_sample_count;
+	uint32_t processed = send_data.processed;
+	uint32_t timeouts = send_data.timeouts;
 
-	int32_t t = sensor_temp_x10;
+	int32_t t = send_data.temp_x10;
 	const char *t_sign;
-	uint32_t t_int = t / 10;
-	uint32_t t_frac = t % 10;
+	uint32_t t_int;
+	uint32_t t_frac;
 
-	int32_t avg = sensor_avg_x10;
+	int32_t avg = send_data.avg_x10;
 	const char *avg_sign;
-	uint32_t avg_int = avg / 10;
-	uint32_t avg_frac = avg % 10;
+	uint32_t avg_int;
+	uint32_t avg_frac;
 
 	split_temp_x10(t, &t_sign, &t_int, &t_frac);
 	split_temp_x10(avg, &avg_sign, &avg_int, &avg_frac);
 
 	(void)snprintf(response,
 				   sizeof(response),
-				   "ADC: raw=%lu, temp=%s%lu.%lu degC, avg=%s%lu.%lu degC, samples=%lu\r\n> ",
+				   "ADC: raw=%lu, temp=%s%lu.%lu degC, avg=%s%lu.%lu degC, samples=%lu, processed=%lu, timeouts=%lu\r\n> ",
 				   (unsigned long)raw,
 				   t_sign,
 				   (unsigned long)t_int,
@@ -1113,7 +1118,9 @@ static void send_adc(void) {
 				   avg_sign,
 				   (unsigned long)avg_int,
 				   (unsigned long)avg_frac,
-				   (unsigned long)samples);
+				   (unsigned long)samples,
+				   (unsigned long)processed,
+				   (unsigned long)timeouts);
 
 	uart_send_text(response);
 }
@@ -1150,6 +1157,12 @@ static void split_temp_x10(int32_t t, const char **sign, uint32_t *int_part, uin
 
 	*int_part = abs_t / 10;
 	*frac_part = abs_t % 10;
+}
+
+static void sensor_publish(const sensor_snapshot_t *s) {
+	osMutexAcquire(sensorMutexHandle, osWaitForever);
+	sensor_snapshot = *s;
+	osMutexRelease(sensorMutexHandle);
 }
 
 /* USER CODE END 4 */
@@ -1218,6 +1231,8 @@ void StartSensorTask(void *argument)
   /* USER CODE BEGIN StartSensorTask */
   /* Infinite loop */
 
+	sensor_snapshot_t local = {0};
+
 	int32_t temp_avg[TEMP_AVG_LENGTH] = {0};
 	uint32_t current = 0u;
 	uint32_t filled_cnt = 0u;
@@ -1233,8 +1248,7 @@ void StartSensorTask(void *argument)
 	  flag = osThreadFlagsWait(SENSOR_FLAG_NEW_SAMPLE, osFlagsWaitAny, SENSOR_TIMEOUT_MS);
 
 	  if ((flag & osFlagsError) != 0u) {
-		  sensor_timeout_count++;
-		  continue;
+		  local.timeouts++;
 	  }
 	  else {
 		  uint16_t raw = adc_dma_buffer[0];
@@ -1248,11 +1262,13 @@ void StartSensorTask(void *argument)
 			  filled_cnt++;
 		  }
 
-		  sensor_raw = raw;
-		  sensor_temp_x10 = temp;
-		  sensor_avg_x10 = sum / (int32_t)filled_cnt;
-		  sensor_processed_count++;
+		  local.raw = raw;
+		  local.temp_x10 = temp;
+		  local.avg_x10 = sum / (int32_t)filled_cnt;
+		  local.processed++;
 	  }
+
+	  sensor_publish(&local);
   }
   /* USER CODE END StartSensorTask */
 }

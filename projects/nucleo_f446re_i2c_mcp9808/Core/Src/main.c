@@ -24,6 +24,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 
 /* USER CODE END Includes */
 
@@ -39,6 +40,7 @@
 #define MCP9808_REG_AMBIENT 0x05u
 #define MCP9808_REG_MANUF_ID 0x06u
 #define MCP9808_DEVICE_ID 0x07u
+#define SENSOR_READ_MS 1000u
 
 /* USER CODE END PD */
 
@@ -54,6 +56,8 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
+static uint32_t last_read_ms = 0u;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -64,6 +68,8 @@ static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 static void uart_print(const char *text);
+static bool mcp9808_read_temp_x10(uint16_t *raw_out, int32_t *out);
+static void split_temp_x10(int32_t t, const char **sign, uint32_t *int_part, uint32_t *frac_part);
 
 /* USER CODE END PFP */
 
@@ -146,9 +152,37 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+  char res[128];
+
+  int32_t temp_x10 = 0;
+  uint16_t temp_raw = 0;
+  const char *temp_sign;
+  uint32_t temp_int;
+  uint32_t temp_frac;
+
   while (1)
   {
     /* USER CODE END WHILE */
+
+	  uint32_t now_ms = HAL_GetTick();
+
+	  if (((uint32_t)now_ms - last_read_ms) >= SENSOR_READ_MS) {
+		  last_read_ms = now_ms;
+		  if (mcp9808_read_temp_x10(&temp_raw, &temp_x10)){
+			  split_temp_x10(temp_x10, &temp_sign, &temp_int, &temp_frac);
+			  (void)snprintf(res, sizeof(res),
+					         "MCP9808: raw = 0x%04x, temp = %s%lu.%lu degC\r\n",
+							 (unsigned int)temp_raw,
+							 temp_sign,
+							 (unsigned long)temp_int,
+							 (unsigned long)temp_frac);
+			  uart_print(res);
+		  }
+		  else {
+			  uart_print("MCP9808: Data read failed\r\n");
+		  }
+	  }
 
     /* USER CODE BEGIN 3 */
   }
@@ -314,6 +348,46 @@ static void uart_print(const char *text) {
 	uint16_t text_len = strlen(text);
 
 	HAL_UART_Transmit(&huart2, (uint8_t *)text, text_len, 100u);
+}
+
+static bool mcp9808_read_temp_x10(uint16_t *raw_out, int32_t *out) {
+	uint8_t buf[2];
+	uint16_t raw;
+	int32_t t;
+
+	if (HAL_I2C_Mem_Read(&hi2c1, MCP9808_I2C_ADDR, MCP9808_REG_AMBIENT, I2C_MEMADD_SIZE_8BIT, buf, 2u, 100u) != HAL_OK) {
+		return false;
+	}
+	else {
+		raw = ((uint16_t)buf[0] << 8u) | buf[1];
+		*raw_out = raw;
+		raw &= 0x1FFFu;
+		t = (int32_t)raw;
+
+		if (t & 0x1000u) {
+			t -= 0x2000u;
+		}
+
+		t = t * 10 / 16;
+		*out = t;
+		return true;
+	}
+}
+
+static void split_temp_x10(int32_t t, const char **sign, uint32_t *int_part, uint32_t *frac_part) {
+	uint32_t abs_t;
+
+	if (t < 0) {
+		*sign = "-";
+		abs_t = -t;
+	}
+	else {
+		*sign = "";
+		abs_t = t;
+	}
+
+	*int_part = abs_t / 10;
+	*frac_part = abs_t % 10;
 }
 
 /* USER CODE END 4 */

@@ -24,6 +24,8 @@
 /* USER CODE BEGIN Includes */
 
 #include "app_uart.h"
+#include "app_cmd.h"
+#include "app_led.h"
 
 /* USER CODE END Includes */
 
@@ -160,7 +162,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   app_uart_init(&huart2);
-  app_uart_send_text("\r\nUART Command Ready\r\n");
+  app_uart_send_text("\r\nUART Command Ready\r\n> ");
 
   /* USER CODE END 2 */
 
@@ -191,6 +193,8 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
+  app_led_init();
+
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -515,10 +519,18 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+	uint8_t byte;
+	app_uart_start_rx(uartRxQueueHandle);
+
+	for(;;)
+	{
+		if (app_uart_read_byte(&byte)) {
+			if (app_uart_take_rx_overflow()) {
+				app_cmd_on_rx_overflow();
+			}
+			app_cmd_process_byte(byte);
+		}
+	}
   /* USER CODE END 5 */
 }
 
@@ -533,10 +545,10 @@ void StartBlinkTask(void *argument)
 {
   /* USER CODE BEGIN StartBlinkTask */
   /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+	for(;;)
+	{
+		app_led_task();
+	}
   /* USER CODE END StartBlinkTask */
 }
 

@@ -1,7 +1,9 @@
 #include <app_uart.h>
 #include <string.h>
+#include <stdbool.h>
 
 #define TX_RING_CAPACITY 512u
+#define DMA_RX_CAPACITY 64u
 
 static UART_HandleTypeDef *huart2;
 static uint8_t tx_ring[TX_RING_CAPACITY];
@@ -11,10 +13,18 @@ static volatile uint16_t tx_dma_len = 0u;
 static volatile uint8_t tx_dma_active = 0u;
 static volatile uint32_t tx_dropped_messages = 0u;
 
+static osMessageQueueId_t rxQueue = NULL;
+static uint8_t dma_rx[DMA_RX_CAPACITY];
+static volatile uint16_t dma_last_position = 0u;
+static volatile uint32_t rx_events = 0u;
+static volatile uint32_t rx_dropped_bytes = 0u;
+static volatile uint8_t ring_overflow = 0u;
+
 static uint16_t tx_free_space_locked(void);
 static void tx_kick_locked(void);
+static void rx_enqueue(uint8_t byte);
 
-
+/* Public Part */
 void app_uart_init(UART_HandleTypeDef *huart) {
 	huart2 = huart;
 }
@@ -51,6 +61,71 @@ void app_uart_send_text(const char *text) {
 	}
 }
 
+void app_uart_start_rx(osMessageQueueId_t queue) {
+	rxQueue = queue;
+
+	if (HAL_UARTEx_ReceiveToIdle_DMA(huart2, dma_rx, DMA_RX_CAPACITY) != HAL_OK) {
+		Error_Handler();
+	}
+}
+
+bool app_uart_read_byte(uint8_t *byte) {
+	if (osMessageQueueGet(rxQueue, byte, NULL, osWaitForever) != osOK) {
+		return false;
+	}
+	else {
+		return true;
+	}
+}
+
+bool app_uart_take_rx_overflow(void) {
+	uint32_t primask;
+	bool overflow;
+
+	primask = __get_PRIMASK();
+	__disable_irq();
+
+	overflow = (ring_overflow != 0u);
+	ring_overflow = 0u;
+
+	if (primask == 0u) {
+		__enable_irq();
+	}
+
+	return overflow;
+}
+
+void app_uart_get_stats(app_uart_stats_t *out) {
+	uint32_t primask;
+
+	primask = __get_PRIMASK();
+	__disable_irq();
+
+	out->rx_events = rx_events;
+	out->rx_dropped_bytes = rx_dropped_bytes;
+	out->tx_dropped_messages = tx_dropped_messages;
+
+	if (primask == 0u) {
+		__enable_irq();
+	}
+}
+
+void app_uart_reset_stats(void) {
+	uint32_t primask;
+
+	primask = __get_PRIMASK();
+	__disable_irq();
+
+	rx_events = 0u;
+	rx_dropped_bytes = 0u;
+	tx_dropped_messages = 0u;
+
+	if (primask == 0u) {
+		__enable_irq();
+	}
+}
+
+/* Private Part */
 static uint16_t tx_free_space_locked(void) {
 	uint16_t used;
 
@@ -92,6 +167,14 @@ static void tx_kick_locked(void) {
 	}
 }
 
+static void rx_enqueue(uint8_t byte) {
+	if (osMessageQueuePut(rxQueue, &byte, 0, 0) != osOK) {
+		ring_overflow = 1u;
+		rx_dropped_bytes++;
+	}
+}
+
+/* System Configuration */
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
 	if (huart->Instance != USART2) {
 		return;
@@ -105,4 +188,33 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
 
 	//Start the next one, clean up the rest of message.
 	tx_kick_locked();
+}
+
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size) {
+	uint16_t new_position;
+	uint16_t index;
+
+	if (huart != huart2) {
+		return;
+	}
+
+	rx_events++;
+	new_position = (uint16_t)(size % DMA_RX_CAPACITY);
+
+	if (new_position > dma_last_position) {
+		for (index = dma_last_position; index < new_position; index++) {
+			rx_enqueue(dma_rx[index]);
+		}
+	}
+	else if (new_position < dma_last_position) {
+		for (index = dma_last_position; index < DMA_RX_CAPACITY; index++) {
+			rx_enqueue(dma_rx[index]);
+		}
+
+		for (index = 0u; index < new_position; index++) {
+			rx_enqueue(dma_rx[index]);
+		}
+	}
+
+	dma_last_position = new_position;
 }

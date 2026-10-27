@@ -1,6 +1,7 @@
 #include "app_cmd.h"
 #include "app_uart.h"
 #include "app_led.h"
+#include "app_sensor.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -14,6 +15,8 @@ static volatile uint32_t rx_command_overflow = 0u;
 static uint8_t last_was_cr = 0u;
 
 static void process_command(const char *command);
+static void send_adc(void);
+static void split_temp_x10(int32_t value, const char **sign, uint32_t *int_part, uint32_t *frac_part);
 
 /* Public Part */
 void app_cmd_process_byte(uint8_t byte) {
@@ -70,7 +73,12 @@ static void process_command(const char *command) {
 		app_uart_send_text("Commands:\r\n");
 		app_uart_send_text(" led on\r\n");
 		app_uart_send_text(" led off\r\n");
-		app_uart_send_text(" status\r\n> ");
+		app_uart_send_text(" blink <100-2000>\r\n");
+		app_uart_send_text(" status\r\n");
+		app_uart_send_text(" stats\r\n");
+		app_uart_send_text(" reset stats\r\n");
+		app_uart_send_text(" adc\r\n");
+		app_uart_send_text(" sample <100-10000>\r\n> ");
 	}
 	else if (strcmp(command, "led on") == 0) {
 		app_led_request(APP_LED_ON, 0);
@@ -106,8 +114,9 @@ static void process_command(const char *command) {
 		app_uart_get_stats(&stats);
 
 		(void)snprintf(res, sizeof(res),
-				       "STATS: Uptime= %lu(ms), RX Events= %lu, RX Dropped bytes= %lu, TX Dropped Messages= %lu, RX Command Overflow= %lu.\r\n> ",
-					   (unsigned long)uptime,
+				       "STATS: Uptime= %lu.%lu(s), RX Events= %lu, RX Dropped bytes= %lu, TX Dropped Messages= %lu, RX Command Overflow= %lu.\r\n> ",
+					   (unsigned long)uptime / 1000u,
+					   (unsigned long)uptime % 1000u,
 					   (unsigned long)stats.rx_events,
 					   (unsigned long)stats.rx_dropped_bytes,
 					   (unsigned long)stats.tx_dropped_messages,
@@ -152,9 +161,70 @@ static void process_command(const char *command) {
 
 		app_uart_send_text(res);
 	}
+	else if (strcmp(command, "adc") == 0) {
+		send_adc();
+	}
+	else if (strncmp(command, "sample ", 6u) == 0) {
+		requested_period = strtoul(&command[6], &end_ptr, 10);
+
+		if ((*end_ptr != '\0') || !app_sensor_set_period(requested_period)) {
+			app_uart_send_text("ERROR: use 'sample <100-10000>'\r\n> ");
+		}
+		else {
+			app_uart_send_text("DONE: Sample Applied.\r\n> ");
+		}
+	}
 	else {
 		app_uart_send_text("ERROR: unknown command, type 'help'.\r\n> ");
 	}
+}
+
+static void send_adc(void) {
+	char res[160];
+	app_sensor_snapshot_t snap;
+	const char *temp_sign;
+	uint32_t temp_int;
+	uint32_t temp_frac;
+	const char *avg_sign;
+	uint32_t avg_int;
+	uint32_t avg_frac;
+
+	app_sensor_read(&snap);
+
+	split_temp_x10(snap.temp_x10, &temp_sign, &temp_int, &temp_frac);
+	split_temp_x10(snap.avg_x10, &avg_sign, &avg_int, &avg_frac);
+
+	(void)snprintf(res, sizeof(res),
+				   "ADC: raw=%lu, temp=%s%lu.%lu C, avg=%s%lu.%lu C, samples=%lu, processed=%lu, timeouts=%lu\r\n> ",
+				   (unsigned long)snap.raw,
+				   temp_sign,
+				   (unsigned long)temp_int,
+				   (unsigned long)temp_frac,
+				   avg_sign,
+				   (unsigned long)avg_int,
+				   (unsigned long)avg_frac,
+				   (unsigned long)snap.samples,
+				   (unsigned long)snap.processed,
+				   (unsigned long)snap.timeouts);
+
+	app_uart_send_text(res);
+
+}
+
+static void split_temp_x10(int32_t value, const char **sign, uint32_t *int_part, uint32_t *frac_part) {
+	uint32_t abs_value;
+
+	if (value < 0) {
+		*sign = "-";
+		abs_value = -value;
+	}
+	else {
+		*sign = "";
+		abs_value = value;
+	}
+
+	*int_part = abs_value / 10;
+	*frac_part = abs_value % 10;
 }
 
 /* System Configuration */

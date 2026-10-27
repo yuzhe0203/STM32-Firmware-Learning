@@ -26,6 +26,7 @@
 #include "app_uart.h"
 #include "app_cmd.h"
 #include "app_led.h"
+#include "app_sensor.h"
 
 /* USER CODE END Includes */
 
@@ -177,6 +178,9 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
+
+  app_sensor_init(&hadc1, &htim2);
+
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -565,7 +569,7 @@ void StartSensorTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    app_sensor_task();
   }
   /* USER CODE END StartSensorTask */
 }

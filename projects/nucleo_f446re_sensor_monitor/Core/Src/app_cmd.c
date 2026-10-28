@@ -2,6 +2,7 @@
 #include "app_uart.h"
 #include "app_led.h"
 #include "app_sensor.h"
+#include "app_config.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -17,6 +18,8 @@ static uint8_t last_was_cr = 0u;
 static void process_command(const char *command);
 static void send_adc(void);
 static void split_temp_x10(int32_t value, const char **sign, uint32_t *int_part, uint32_t *frac_part);
+static void send_config(void);
+static const char *mode_to_string(app_led_mode_t mode);
 
 /* Public Part */
 void app_cmd_process_byte(uint8_t byte) {
@@ -78,7 +81,10 @@ static void process_command(const char *command) {
 		app_uart_send_text(" stats\r\n");
 		app_uart_send_text(" reset stats\r\n");
 		app_uart_send_text(" adc\r\n");
-		app_uart_send_text(" sample <100-10000>\r\n> ");
+		app_uart_send_text(" sample <100-10000>\r\n");
+		app_uart_send_text(" config show\r\n");
+		app_uart_send_text(" config save\r\n");
+		app_uart_send_text(" config reset\r\n> ");
 	}
 	else if (strcmp(command, "led on") == 0) {
 		app_led_request(APP_LED_ON, 0);
@@ -155,7 +161,7 @@ static void process_command(const char *command) {
 			break;
 
 		default:
-			(void)snprintf(res, sizeof(res), "STATUS: UNKOWN.\r\n> ");
+			(void)snprintf(res, sizeof(res), "STATUS: UNKNOWN.\r\n> ");
 			break;
 		}
 
@@ -172,6 +178,32 @@ static void process_command(const char *command) {
 		}
 		else {
 			app_uart_send_text("DONE: Sample Applied.\r\n> ");
+		}
+	}
+	else if (strcmp(command, "config show") == 0) {
+		send_config();
+	}
+	else if (strcmp(command, "config save") == 0) {
+		app_config_values_t values = {0};
+		values.blink_ms = app_led_get_period();
+		values.led_mode = app_led_get_mode();
+		values.sample_ms = app_sensor_get_period();
+
+		if (app_config_save(&values)) {
+			app_uart_send_text("DONE: Config Save Succeed.\r\n> ");
+		}
+		else {
+			app_uart_send_text("ERROR: Config Save Failed.\r\n> ");
+		}
+	}
+	else if (strcmp(command, "config reset") == 0) {
+		if (app_config_erase()) {
+			app_led_request(APP_LED_OFF, 0);
+			app_sensor_set_period(SAMPLE_DEFAULT_PERIOD_MS);
+			app_uart_send_text("DONE: Config Reset Succeed.\r\n> ");
+		}
+		else {
+			app_uart_send_text("ERROR: Config Reset Failed.\r\n> ");
 		}
 	}
 	else {
@@ -225,6 +257,57 @@ static void split_temp_x10(int32_t value, const char **sign, uint32_t *int_part,
 
 	*int_part = abs_value / 10;
 	*frac_part = abs_value % 10;
+}
+
+static const char *mode_to_string(app_led_mode_t mode) {
+	switch(mode) {
+
+	case APP_LED_ON:
+		return "ON";
+		break;
+
+	case APP_LED_OFF:
+		return "OFF";
+		break;
+
+	case APP_LED_BLINK:
+		return "BLINK";
+		break;
+
+	case APP_LED_HOLD:
+		return "STOPPED";
+		break;
+
+	default:
+		return "UNKNOWN";
+		break;
+
+	}
+}
+
+static void send_config(void) {
+	char res[160];
+	app_config_values_t values = {0};
+
+	if (app_config_read(&values)) {
+		(void)snprintf(res, sizeof(res),
+				       "CONFIG NOW: Mode: %s, Blink= %lu ms, Sample= %lu ms\r\nCONFIG FLASH: Mode: %s, Blink= %lu ms, Sample= %lu ms\r\n> ",
+					   mode_to_string(app_led_get_mode()),
+					   (unsigned long)app_led_get_period(),
+					   (unsigned long)app_sensor_get_period(),
+					   mode_to_string(values.led_mode),
+					   (unsigned long)values.blink_ms,
+					   (unsigned long)values.sample_ms);
+	}
+	else {
+		(void)snprintf(res, sizeof(res),
+					   "CONFIG NOW: Mode: %s, Blink= %lu ms, Sample= %lu ms\r\nCONFIG FLASH: None\r\n> ",
+					   mode_to_string(app_led_get_mode()),
+					   (unsigned long)app_led_get_period(),
+					   (unsigned long)app_sensor_get_period());
+	}
+
+	app_uart_send_text(res);
 }
 
 /* System Configuration */

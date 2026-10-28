@@ -27,6 +27,16 @@ void app_led_init(void) {
 bool app_led_request(app_led_mode_t mode, uint32_t period_ms) {
 	led_request_t req;
 
+	if (mode > APP_LED_HOLD) {
+		return false;
+	}
+
+	if (mode == APP_LED_BLINK) {
+		if ((period_ms > BLINK_MAX_MS) || (period_ms < BLINK_MIN_MS)) {
+			return false;
+		}
+	}
+
 	if (LEDQueue == NULL) {
 		return false;
 	}

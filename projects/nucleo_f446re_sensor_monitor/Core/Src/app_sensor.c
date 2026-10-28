@@ -49,7 +49,7 @@ bool app_sensor_set_period(uint32_t ms) {
 	}
 }
 
-uint32_t appp_sensor_get_period(void) {
+uint32_t app_sensor_get_period(void) {
 	return period_ms;
 }
 

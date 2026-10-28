@@ -27,6 +27,7 @@
 #include "app_cmd.h"
 #include "app_led.h"
 #include "app_sensor.h"
+#include "app_config.h"
 
 /* USER CODE END Includes */
 
@@ -163,7 +164,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   app_uart_init(&huart2);
-  app_uart_send_text("\r\nUART Command Ready\r\n> ");
+  app_uart_send_text("\r\nUART Command Ready\r\n");
 
   /* USER CODE END 2 */
 
@@ -220,6 +221,25 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
+
+  app_config_values_t values;
+
+  if (app_config_read(&values)) {
+	  if (!app_sensor_set_period(values.sample_ms)) {
+		  values.sample_ms = SAMPLE_DEFAULT_PERIOD_MS;
+	  }
+
+	  if (!app_led_request((app_led_mode_t)values.led_mode, values.blink_ms)) {
+		  values.led_mode = (uint32_t)APP_LED_OFF;
+		  values.blink_ms = 500u;
+	  }
+
+	  app_uart_send_text("CONFIG: Load From Flash.\r\n> ");
+  }
+  else {
+	  app_uart_send_text("CONFIG: Using Defaults.\r\n> ");
+  }
+
   /* USER CODE END RTOS_EVENTS */
 
   /* Start scheduler */

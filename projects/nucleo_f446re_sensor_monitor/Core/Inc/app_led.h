@@ -13,6 +13,9 @@ typedef enum {
 	APP_LED_HOLD,
 }app_led_mode_t;
 
+#define BLINK_MIN_MS 100u
+#define BLINK_MAX_MS 2000u
+
 void app_led_init(void);
 
 void app_led_task(void);

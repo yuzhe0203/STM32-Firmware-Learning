@@ -3,6 +3,7 @@
 #include "app_led.h"
 #include "app_sensor.h"
 #include "app_config.h"
+#include "app_mcp9808.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -20,6 +21,7 @@ static void send_adc(void);
 static void split_temp_x10(int32_t value, const char **sign, uint32_t *int_part, uint32_t *frac_part);
 static void send_config(void);
 static const char *mode_to_string(app_led_mode_t mode);
+static void send_temp(void);
 
 /* Public Part */
 void app_cmd_process_byte(uint8_t byte) {
@@ -84,7 +86,8 @@ static void process_command(const char *command) {
 		app_uart_send_text(" sample <100-10000>\r\n");
 		app_uart_send_text(" config show\r\n");
 		app_uart_send_text(" config save\r\n");
-		app_uart_send_text(" config reset\r\n> ");
+		app_uart_send_text(" config reset\r\n");
+		app_uart_send_text(" temp\r\n> ");
 	}
 	else if (strcmp(command, "led on") == 0) {
 		app_led_request(APP_LED_ON, 0);
@@ -206,6 +209,9 @@ static void process_command(const char *command) {
 			app_uart_send_text("ERROR: Config Reset Failed.\r\n> ");
 		}
 	}
+	else if (strcmp(command, "temp") == 0) {
+		send_temp();
+	}
 	else {
 		app_uart_send_text("ERROR: unknown command, type 'help'.\r\n> ");
 	}
@@ -306,6 +312,37 @@ static void send_config(void) {
 					   (unsigned long)app_led_get_period(),
 					   (unsigned long)app_sensor_get_period());
 	}
+
+	app_uart_send_text(res);
+}
+
+static void send_temp(void) {
+	char res[128];
+	app_sensor_snapshot_t chip;
+	const char *chip_sign;
+	uint32_t chip_int;
+	uint32_t chip_frac;
+	app_mcp9808_snapshot_t temp;
+	const char *temp_sign;
+	uint32_t temp_int;
+	uint32_t temp_frac;
+
+	app_sensor_read(&chip);
+	app_mcp9808_read(&temp);
+
+	split_temp_x10(chip.avg_x10, &chip_sign, &chip_int, &chip_frac);
+	split_temp_x10(temp.temp_x10, &temp_sign, &temp_int, &temp_frac);
+
+	(void)snprintf(res, sizeof(res),
+			 	   "TEMP: Chip= %s%lu.%lu C, Ambient= %s%lu.%lu C, OK= %lu, ERROR= %lu\r\n> ",
+				   chip_sign,
+				   (unsigned long)chip_int,
+				   (unsigned long)chip_frac,
+				   temp_sign,
+				   (unsigned long)temp_int,
+				   (unsigned long)temp_frac,
+				   (unsigned long)temp.ok_count,
+				   (unsigned long)temp.error_count);
 
 	app_uart_send_text(res);
 }

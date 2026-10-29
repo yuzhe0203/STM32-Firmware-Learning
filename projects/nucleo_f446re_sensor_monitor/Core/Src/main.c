@@ -28,6 +28,7 @@
 #include "app_led.h"
 #include "app_sensor.h"
 #include "app_config.h"
+#include "app_mcp9808.h"
 
 /* USER CODE END Includes */
 
@@ -181,6 +182,7 @@ int main(void)
   /* add mutexes, ... */
 
   app_sensor_init(&hadc1, &htim2);
+  app_mcp9808_init(&hi2c1);
 
   /* USER CODE END RTOS_MUTEX */
 
@@ -569,10 +571,7 @@ void StartBlinkTask(void *argument)
 {
   /* USER CODE BEGIN StartBlinkTask */
   /* Infinite loop */
-	for(;;)
-	{
-		app_led_task();
-	}
+	app_led_task();
   /* USER CODE END StartBlinkTask */
 }
 
@@ -587,10 +586,7 @@ void StartSensorTask(void *argument)
 {
   /* USER CODE BEGIN StartSensorTask */
   /* Infinite loop */
-  for(;;)
-  {
-    app_sensor_task();
-  }
+	app_sensor_task();
   /* USER CODE END StartSensorTask */
 }
 
@@ -605,10 +601,7 @@ void StartMcp9808Task(void *argument)
 {
   /* USER CODE BEGIN StartMcp9808Task */
   /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+	app_mcp9808_task();
   /* USER CODE END StartMcp9808Task */
 }
 

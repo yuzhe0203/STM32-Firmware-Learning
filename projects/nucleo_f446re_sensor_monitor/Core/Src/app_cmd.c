@@ -4,6 +4,7 @@
 #include "app_sensor.h"
 #include "app_config.h"
 #include "app_mcp9808.h"
+#include "app_temp_led.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -334,13 +335,14 @@ static void send_temp(void) {
 	split_temp_x10(temp.temp_x10, &temp_sign, &temp_int, &temp_frac);
 
 	(void)snprintf(res, sizeof(res),
-			 	   "TEMP: Chip= %s%lu.%lu C, Ambient= %s%lu.%lu C, OK= %lu, ERROR= %lu\r\n> ",
+			 	   "TEMP: Chip= %s%lu.%lu C, Ambient= %s%lu.%lu C, Zone= %s, OK= %lu, ERROR= %lu\r\n> ",
 				   chip_sign,
 				   (unsigned long)chip_int,
 				   (unsigned long)chip_frac,
 				   temp_sign,
 				   (unsigned long)temp_int,
 				   (unsigned long)temp_frac,
+				   app_temp_led_zone_to_string(temp.zone),
 				   (unsigned long)temp.ok_count,
 				   (unsigned long)temp.error_count);
 

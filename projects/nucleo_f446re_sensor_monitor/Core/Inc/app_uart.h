@@ -1,6 +1,5 @@
-#ifdef APP_UART_H
+#ifndef APP_UART_H
 #define APP_UART_H
-#endif
 
 #include <main.h>
 #include <stdbool.h>
@@ -25,3 +24,5 @@ bool app_uart_take_rx_overflow(void);
 void app_uart_get_stats(app_uart_stats_t *out);
 
 void app_uart_reset_stats(void);
+
+#endif

@@ -1,6 +1,5 @@
-#ifdef APP_SENSOR_H
+#ifndef APP_SENSOR_H
 #define APP_SENSOR_H
-#endif
 
 #include <main.h>
 #include <stdbool.h>
@@ -27,3 +26,5 @@ bool app_sensor_set_period(uint32_t ms);
 uint32_t app_sensor_get_period(void);
 
 void app_sensor_read(app_sensor_snapshot_t *out);
+
+#endif

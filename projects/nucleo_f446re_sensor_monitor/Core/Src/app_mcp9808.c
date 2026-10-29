@@ -19,6 +19,7 @@ static void publish(app_mcp9808_snapshot_t *s);
 void app_mcp9808_init(I2C_HandleTypeDef *hi2c) {
 	i2c = hi2c;
 	mutex = osMutexNew(NULL);
+	shared.zone = TEMP_ZONE_NONE;
 
 	if (mutex == NULL) {
 		Error_Handler();
@@ -29,6 +30,8 @@ void app_mcp9808_task(void) {
 	app_mcp9808_snapshot_t local = {0};
 	int32_t temp;
 	uint32_t next_wake = osKernelGetTickCount();
+	app_temp_zone_t zone = TEMP_ZONE_NONE;
+	app_temp_led_show(zone);
 
 	for (;;) {
 
@@ -36,13 +39,16 @@ void app_mcp9808_task(void) {
 			local.temp_x10 = temp;
 			local.valid = true;
 			local.ok_count++;
+			local.zone = app_temp_led_next_zone(zone, temp);
 		}
 		else {
 			local.valid = false;
 			local.error_count++;
+			local.zone = TEMP_ZONE_NONE;
 		}
 
 		publish(&local);
+		app_temp_led_show(local.zone);
 		next_wake += MCP9808_READ_PERIOD_MS;
 		osDelayUntil(next_wake);
 

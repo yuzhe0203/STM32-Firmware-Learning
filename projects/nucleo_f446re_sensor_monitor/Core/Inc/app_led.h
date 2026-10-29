@@ -1,6 +1,5 @@
-#ifdef APP_LED_H
+#ifndef APP_LED_H
 #define APP_LED_H
-#endif
 
 #include <main.h>
 #include <stdbool.h>
@@ -25,3 +24,5 @@ bool app_led_request(app_led_mode_t mode, uint32_t period_ms);
 app_led_mode_t app_led_get_mode(void);
 
 uint32_t app_led_get_period(void);
+
+#endif

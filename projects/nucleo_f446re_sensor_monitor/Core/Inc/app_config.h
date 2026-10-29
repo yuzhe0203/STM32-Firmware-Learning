@@ -1,6 +1,5 @@
-#ifdef APP_CONFIG_H
+#ifndef APP_CONFIG_H
 #define APP_CONFIG_H
-#endif
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -16,3 +15,5 @@ bool app_config_read(app_config_values_t *out);
 bool app_config_save(const app_config_values_t *in);
 
 bool app_config_erase(void);
+
+#endif

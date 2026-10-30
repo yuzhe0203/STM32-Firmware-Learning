@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include <stdio.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -39,6 +40,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+#define APP_TEMP_LED_SELFTEST 0u
 
 /* USER CODE END PD */
 
@@ -121,6 +124,10 @@ void StartMcp9808Task(void *argument);
 
 /* USER CODE BEGIN PFP */
 
+#if APP_TEMP_LED_SELFTEST
+static void app_temp_led_selftest(void);
+#endif
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -166,6 +173,9 @@ int main(void)
 
   app_uart_init(&huart2);
   app_uart_send_text("\r\nUART Command Ready\r\n");
+  #if APP_TEMP_LED_SELFTEST
+  app_temp_led_selftest();
+  #endif
 
   /* USER CODE END 2 */
 
@@ -531,6 +541,60 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+#if APP_TEMP_LED_SELFTEST
+
+typedef struct {
+	int32_t temp_x10;
+	app_temp_zone_t expected;
+}selftest_case_t;
+
+static void app_temp_led_selftest(void) {
+	static const selftest_case_t cases[] = {
+			{ 255, TEMP_ZONE_BLUE },
+			{ 258, TEMP_ZONE_BLUE },
+			{ 260, TEMP_ZONE_GREEN },
+			{ 258, TEMP_ZONE_GREEN },
+			{ 257, TEMP_ZONE_GREEN },
+			{ 256, TEMP_ZONE_BLUE },
+			{ 300, TEMP_ZONE_RED },
+			{ 297, TEMP_ZONE_RED },
+			{ 296, TEMP_ZONE_GREEN },
+			{ 250, TEMP_ZONE_BLUE },
+			{ -5, TEMP_ZONE_BLUE },
+	};
+
+	const uint32_t count = (uint32_t)(sizeof(cases) / sizeof(cases[0]));
+	app_temp_zone_t current = TEMP_ZONE_NONE;
+	uint32_t pass = 0u;
+	char line [96];
+
+	for (uint32_t i = 0u; i < count; i++) {
+		current = app_temp_led_next_zone(current, cases[i].temp_x10);
+
+		const uint32_t ok = (current == cases[i].expected)? 1u : 0u;
+		pass += ok;
+
+		(void)snprintf(line, sizeof(line),
+				       "temp= %ld, Got= %s, Exp= %s (%s).\r\n",
+					   (long)cases[i].temp_x10,
+					   app_temp_led_zone_to_string(current),
+					   app_temp_led_zone_to_string(cases[i].expected),
+					   (ok != 0u)? "PASS" : "FAIL")	;
+
+		app_uart_send_text(line);
+	}
+
+	(void)snprintf(line, sizeof(line),
+				   "SELFTEST: %lu/%lu passed.\r\n",
+				   (unsigned long)pass,
+				   (unsigned long)count);
+
+	app_uart_send_text(line);
+
+}
+
+#endif
 
 /* USER CODE END 4 */
 

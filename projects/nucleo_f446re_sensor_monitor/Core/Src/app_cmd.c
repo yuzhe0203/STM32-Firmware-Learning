@@ -5,6 +5,7 @@
 #include "app_config.h"
 #include "app_mcp9808.h"
 #include "app_temp_led.h"
+#include "app_reset.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -143,29 +144,32 @@ static void process_command(const char *command) {
 		char res[64];
 		app_led_mode_t mode = app_led_get_mode();
 		uint32_t period = app_led_get_period();
+		app_reset_cause_t cause = app_reset_get_cause();
+		const char *cause_str = app_reset_cause_to_string(cause);
 
 		switch(mode) {
 
 		case APP_LED_ON:
-			(void)snprintf(res, sizeof(res), "STATUS: LED ON.\r\n> ");
+			(void)snprintf(res, sizeof(res), "STATUS: LED ON, Reset= %s.\r\n> ", cause_str);
 			break;
 
 		case APP_LED_OFF:
-			(void)snprintf(res, sizeof(res), "STATUS: LED OFF.\r\n> ");
+			(void)snprintf(res, sizeof(res), "STATUS: LED OFF, Reset= %s.\r\n> ", cause_str);
 			break;
 
 		case APP_LED_BLINK:
 			(void)snprintf(res, sizeof(res),
-					       "STATUS: BLINK %lu ms.\r\n> ",
-						   (unsigned long)period);
+					       "STATUS: BLINK %lu ms, Reset= %s.\r\n> ",
+						   (unsigned long)period,
+						   cause_str);
 			break;
 
 		case APP_LED_HOLD:
-			(void)snprintf(res, sizeof(res), "STATUS: BLINK STOPPED.\r\n> ");
+			(void)snprintf(res, sizeof(res), "STATUS: BLINK STOPPED, Reset= %s.\r\n> ", cause_str);
 			break;
 
 		default:
-			(void)snprintf(res, sizeof(res), "STATUS: UNKNOWN.\r\n> ");
+			(void)snprintf(res, sizeof(res), "STATUS: UNKNOWN, Reset= %s.\r\n> ", cause_str);
 			break;
 		}
 

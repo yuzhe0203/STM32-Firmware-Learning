@@ -30,6 +30,7 @@
 #include "app_sensor.h"
 #include "app_config.h"
 #include "app_mcp9808.h"
+#include "app_reset.h"
 
 /* USER CODE END Includes */
 
@@ -172,6 +173,12 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   app_uart_init(&huart2);
+  app_reset_capture();
+
+  char msg[32];
+  (void)snprintf(msg, sizeof(msg), "\r\nReset= %s", app_reset_cause_to_string(app_reset_get_cause()));
+
+  app_uart_send_text(msg);
   app_uart_send_text("\r\nUART Command Ready\r\n");
   #if APP_TEMP_LED_SELFTEST
   app_temp_led_selftest();

@@ -9,8 +9,8 @@
 #define SENSOR_TIMEOUT_MS (SAMPLE_MAX_PERIOD_MS * 2u)
 #define TS_CAL1_ADDRESS 0x1FFF7A2Cu
 #define TS_CAL2_ADDRESS 0x1FFF7A2Eu
-#define TS_CAL1_TEMP_C 30u
-#define TS_CAL2_TEMP_C 110u
+#define TS_CAL1_TEMP_C ((int32_t)30)
+#define TS_CAL2_TEMP_C ((int32_t)110)
 #define TIM_TICKS_PER_MS 10u // Assumes PSC = 8399 and 84 MHz timer clock (10 kHz tick)
 
 static ADC_HandleTypeDef *adc = NULL;

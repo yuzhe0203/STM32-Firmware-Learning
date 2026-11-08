@@ -101,6 +101,17 @@ bool app_config_erase(void) {
 
 }
 
+void app_config_get_defaults(app_config_values_t *out) {
+	if (out == NULL) {
+		Error_Handler();
+	}
+
+	out->blink_ms = CONFIG_DEFAULT_BLINK_MS;
+	out->led_mode = (uint32_t)CONFIG_DEFAULT_LED_MODE;
+	out->sample_ms = CONFIG_DEFAULT_SAMPLE_MS;
+
+}
+
 /* Private Part */
 
 static uint32_t checksum(const app_config_t *config) {

@@ -10,7 +10,7 @@ typedef struct {
 
 bool ledStatus;
 static osMessageQueueId_t LEDQueue = NULL;
-static volatile app_led_mode_t current_mode;
+static volatile app_led_mode_t current_mode = APP_LED_OFF;
 static volatile uint32_t current_ms = 500u;
 
 static void write_leds(bool a_on, bool b_on);
@@ -53,7 +53,7 @@ bool app_led_request(app_led_mode_t mode, uint32_t period_ms) {
 
 void app_led_task(void) {
 	app_led_mode_t mode = APP_LED_OFF;
-	uint32_t period_ms = 500u;
+	uint32_t period_ms = 0u;
 	bool phase = false;
 	led_request_t req;
 
@@ -84,6 +84,7 @@ void app_led_task(void) {
 				break;
 
 			case APP_LED_HOLD:
+				break;
 
 			default:
 				break;

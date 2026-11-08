@@ -6,8 +6,8 @@
 #include "cmsis_os.h"
 
 typedef enum {
-	APP_LED_ON,
 	APP_LED_OFF,
+	APP_LED_ON,
 	APP_LED_BLINK,
 	APP_LED_HOLD,
 }app_led_mode_t;

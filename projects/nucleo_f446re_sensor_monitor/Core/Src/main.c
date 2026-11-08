@@ -31,6 +31,7 @@
 #include "app_config.h"
 #include "app_mcp9808.h"
 #include "app_reset.h"
+#include "app_watchdog.h"
 
 /* USER CODE END Includes */
 
@@ -43,6 +44,7 @@
 /* USER CODE BEGIN PD */
 
 #define APP_TEMP_LED_SELFTEST 0u
+#define APP_CONFIG_DEBUG 0u
 
 /* USER CODE END PD */
 
@@ -56,6 +58,8 @@ ADC_HandleTypeDef hadc1;
 DMA_HandleTypeDef hdma_adc1;
 
 I2C_HandleTypeDef hi2c1;
+
+IWDG_HandleTypeDef hiwdg;
 
 TIM_HandleTypeDef htim2;
 
@@ -91,6 +95,13 @@ const osThreadAttr_t mcp9808Task_attributes = {
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for watchdogTask */
+osThreadId_t watchdogTaskHandle;
+const osThreadAttr_t watchdogTask_attributes = {
+  .name = "watchdogTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
 /* Definitions for uartRxQueue */
 osMessageQueueId_t uartRxQueueHandle;
 const osMessageQueueAttr_t uartRxQueue_attributes = {
@@ -118,10 +129,12 @@ static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_I2C1_Init(void);
+static void MX_IWDG_Init(void);
 void StartDefaultTask(void *argument);
 void StartBlinkTask(void *argument);
 void StartSensorTask(void *argument);
 void StartMcp9808Task(void *argument);
+void StartWatchdogTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -161,6 +174,8 @@ int main(void)
 
   /* USER CODE BEGIN SysInit */
 
+  __HAL_DBGMCU_FREEZE_IWDG();
+
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -170,10 +185,12 @@ int main(void)
   MX_ADC1_Init();
   MX_TIM2_Init();
   MX_I2C1_Init();
+  MX_IWDG_Init();
   /* USER CODE BEGIN 2 */
 
   app_uart_init(&huart2);
   app_reset_capture();
+  app_watchdog_init(&hiwdg);
 
   char msg[32];
   (void)snprintf(msg, sizeof(msg), "\r\nReset= %s", app_reset_cause_to_string(app_reset_get_cause()));
@@ -202,7 +219,6 @@ int main(void)
   app_mcp9808_init(&hi2c1);
 
   /* USER CODE END RTOS_MUTEX */
-
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -234,6 +250,9 @@ int main(void)
   /* creation of mcp9808Task */
   mcp9808TaskHandle = osThreadNew(StartMcp9808Task, NULL, &mcp9808Task_attributes);
 
+  /* creation of watchdogTask */
+  watchdogTaskHandle = osThreadNew(StartWatchdogTask, NULL, &watchdogTask_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
@@ -241,23 +260,40 @@ int main(void)
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
 
-  app_config_values_t values;
+  app_config_values_t values = {0};
+  app_config_values_t defaults;
+
+  app_config_get_defaults(&defaults);
 
   if (app_config_read(&values)) {
-	  if (!app_sensor_set_period(values.sample_ms)) {
-		  values.sample_ms = SAMPLE_DEFAULT_PERIOD_MS;
-	  }
-
-	  if (!app_led_request((app_led_mode_t)values.led_mode, values.blink_ms)) {
-		  values.led_mode = (uint32_t)APP_LED_OFF;
-		  values.blink_ms = 500u;
-	  }
-
 	  app_uart_send_text("CONFIG: Load From Flash.\r\n> ");
   }
   else {
+	  values = defaults;
 	  app_uart_send_text("CONFIG: Using Defaults.\r\n> ");
   }
+
+  if (!app_sensor_set_period(values.sample_ms)) {
+	  app_uart_send_text("CONFIG: sample invalid, using default.\r\n> ");
+	  app_sensor_set_period(defaults.sample_ms);
+  }
+
+  if (!app_led_request((app_led_mode_t)values.led_mode, values.blink_ms)) {
+	  app_uart_send_text("CONFIG: LED invalid, using default.\r\n> ");
+	  app_led_request((app_led_mode_t)defaults.led_mode, defaults.blink_ms);
+  }
+
+#if APP_CONFIG_DEBUG
+
+  char dbg[64];
+  uint32_t led = values.led_mode;
+  uint32_t blink = values.blink_ms;
+  uint32_t sample = values.sample_ms;
+
+  (void)snprintf(dbg, sizeof(dbg), "DBG: led=%lu, blink=%lu, sample=%lu.\r\n> ", (unsigned long)led, (unsigned long)blink, (unsigned long)sample);
+  app_uart_send_text(dbg);
+
+#endif
 
   /* USER CODE END RTOS_EVENTS */
 
@@ -294,9 +330,10 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = 16;
@@ -407,6 +444,34 @@ static void MX_I2C1_Init(void)
   /* USER CODE BEGIN I2C1_Init 2 */
 
   /* USER CODE END I2C1_Init 2 */
+
+}
+
+/**
+  * @brief IWDG Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_IWDG_Init(void)
+{
+
+  /* USER CODE BEGIN IWDG_Init 0 */
+
+  /* USER CODE END IWDG_Init 0 */
+
+  /* USER CODE BEGIN IWDG_Init 1 */
+
+  /* USER CODE END IWDG_Init 1 */
+  hiwdg.Instance = IWDG;
+  hiwdg.Init.Prescaler = IWDG_PRESCALER_64;
+  hiwdg.Init.Reload = 2499;
+  if (HAL_IWDG_Init(&hiwdg) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN IWDG_Init 2 */
+
+  /* USER CODE END IWDG_Init 2 */
 
 }
 
@@ -674,6 +739,23 @@ void StartMcp9808Task(void *argument)
   /* Infinite loop */
 	app_mcp9808_task();
   /* USER CODE END StartMcp9808Task */
+}
+
+/* USER CODE BEGIN Header_StartWatchdogTask */
+/**
+* @brief Function implementing the watchdogTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartWatchdogTask */
+void StartWatchdogTask(void *argument)
+{
+  /* USER CODE BEGIN StartWatchdogTask */
+  /* Infinite loop */
+
+	app_watchdog_task();
+
+  /* USER CODE END StartWatchdogTask */
 }
 
 /**

@@ -1,4 +1,5 @@
 #include "app_led.h"
+#include "app_watchdog.h"
 #include <main.h>
 #include <stdbool.h>
 #include "cmsis_os.h"
@@ -7,6 +8,8 @@ typedef struct {
 	app_led_mode_t mode;
 	uint32_t period;
 }led_request_t;
+
+#define APP_LED_IDLE_WAIT_MS 1000u
 
 bool ledStatus;
 static osMessageQueueId_t LEDQueue = NULL;
@@ -61,7 +64,9 @@ void app_led_task(void) {
 	osStatus_t status;
 
 	for(;;) {
-		timeout = (mode == APP_LED_BLINK)? period_ms : osWaitForever;
+		app_watchdog_checkin(APP_WDG_ID_LED);
+
+		timeout = (mode == APP_LED_BLINK)? period_ms : APP_LED_IDLE_WAIT_MS;
 		status = osMessageQueueGet(LEDQueue, &req, NULL, timeout);
 
 		if (status == osOK) {

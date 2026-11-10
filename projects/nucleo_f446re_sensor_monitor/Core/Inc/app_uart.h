@@ -17,7 +17,7 @@ void app_uart_send_text(const char *text);
 
 void app_uart_start_rx(osMessageQueueId_t queue);
 
-bool app_uart_read_byte(uint8_t *byte);
+bool app_uart_read_byte(uint8_t *byte, uint32_t timeout_ms);
 
 bool app_uart_take_rx_overflow(void);
 

@@ -2,11 +2,12 @@
 #include <stdbool.h>
 #include "cmsis_os.h"
 #include "app_sensor.h"
+#include "app_watchdog.h"
 
 #define ADC_BUFFER_LEN 1u
 #define SENSOR_FLAG_NEW_SAMPLE 0x01u
 #define TEMP_AVG_LEN 8u
-#define SENSOR_TIMEOUT_MS (SAMPLE_MAX_PERIOD_MS * 2u)
+#define SENSOR_WAIT_SLICE_MS 1000u
 #define TS_CAL1_ADDRESS 0x1FFF7A2Cu
 #define TS_CAL2_ADDRESS 0x1FFF7A2Eu
 #define TS_CAL1_TEMP_C ((int32_t)30)
@@ -60,6 +61,8 @@ void app_sensor_read(app_sensor_snapshot_t *out) {
 }
 
 void app_sensor_task() {
+	app_watchdog_checkin(APP_WDG_ID_SENSOR);
+
 	task_id = osThreadGetId();
 
 	if (HAL_ADC_Start_DMA(adc, (uint32_t *)adc_buffer, ADC_BUFFER_LEN) != HAL_OK) {
@@ -78,16 +81,26 @@ void app_sensor_task() {
 	int32_t sum = 0;
 	uint32_t flags;
 	app_sensor_snapshot_t local = {0};
+	uint32_t last_sample_tick = osKernelGetTickCount();
 
 	for (;;) {
-		flags = osThreadFlagsWait(SENSOR_FLAG_NEW_SAMPLE, osFlagsWaitAny, SENSOR_TIMEOUT_MS);
+		app_watchdog_checkin(APP_WDG_ID_SENSOR);
+
+		flags = osThreadFlagsWait(SENSOR_FLAG_NEW_SAMPLE, osFlagsWaitAny, SENSOR_WAIT_SLICE_MS);
 
 		if ((flags & osFlagsError) != 0u) {
-			local.timeouts++;
+			uint32_t now = osKernelGetTickCount();
+
+			if ((now - last_sample_tick) > (period_ms * 2u)) {
+				local.timeouts++;
+				last_sample_tick = now;
+				publish(&local);
+			}
 		}
 		else {
 			uint16_t raw = adc_buffer[0];
 			int32_t temp = raw_to_temp_x10(raw);
+			last_sample_tick = osKernelGetTickCount();
 
 			sum = (sum - history[index]) + temp;
 			history[index] = temp;

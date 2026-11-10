@@ -43,8 +43,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define APP_TEMP_LED_SELFTEST 0u
-#define APP_CONFIG_DEBUG 0u
+#define UART_READ_WAIT_MS 1000u
 
 /* USER CODE END PD */
 
@@ -282,18 +281,6 @@ int main(void)
 	  app_uart_send_text("CONFIG: LED invalid, using default.\r\n> ");
 	  app_led_request((app_led_mode_t)defaults.led_mode, defaults.blink_ms);
   }
-
-#if APP_CONFIG_DEBUG
-
-  char dbg[64];
-  uint32_t led = values.led_mode;
-  uint32_t blink = values.blink_ms;
-  uint32_t sample = values.sample_ms;
-
-  (void)snprintf(dbg, sizeof(dbg), "DBG: led=%lu, blink=%lu, sample=%lu.\r\n> ", (unsigned long)led, (unsigned long)blink, (unsigned long)sample);
-  app_uart_send_text(dbg);
-
-#endif
 
   /* USER CODE END RTOS_EVENTS */
 
@@ -614,60 +601,6 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-#if APP_TEMP_LED_SELFTEST
-
-typedef struct {
-	int32_t temp_x10;
-	app_temp_zone_t expected;
-}selftest_case_t;
-
-static void app_temp_led_selftest(void) {
-	static const selftest_case_t cases[] = {
-			{ 255, TEMP_ZONE_BLUE },
-			{ 258, TEMP_ZONE_BLUE },
-			{ 260, TEMP_ZONE_GREEN },
-			{ 258, TEMP_ZONE_GREEN },
-			{ 257, TEMP_ZONE_GREEN },
-			{ 256, TEMP_ZONE_BLUE },
-			{ 300, TEMP_ZONE_RED },
-			{ 297, TEMP_ZONE_RED },
-			{ 296, TEMP_ZONE_GREEN },
-			{ 250, TEMP_ZONE_BLUE },
-			{ -5, TEMP_ZONE_BLUE },
-	};
-
-	const uint32_t count = (uint32_t)(sizeof(cases) / sizeof(cases[0]));
-	app_temp_zone_t current = TEMP_ZONE_NONE;
-	uint32_t pass = 0u;
-	char line [96];
-
-	for (uint32_t i = 0u; i < count; i++) {
-		current = app_temp_led_next_zone(current, cases[i].temp_x10);
-
-		const uint32_t ok = (current == cases[i].expected)? 1u : 0u;
-		pass += ok;
-
-		(void)snprintf(line, sizeof(line),
-				       "temp= %ld, Got= %s, Exp= %s (%s).\r\n",
-					   (long)cases[i].temp_x10,
-					   app_temp_led_zone_to_string(current),
-					   app_temp_led_zone_to_string(cases[i].expected),
-					   (ok != 0u)? "PASS" : "FAIL")	;
-
-		app_uart_send_text(line);
-	}
-
-	(void)snprintf(line, sizeof(line),
-				   "SELFTEST: %lu/%lu passed.\r\n",
-				   (unsigned long)pass,
-				   (unsigned long)count);
-
-	app_uart_send_text(line);
-
-}
-
-#endif
-
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -686,12 +619,16 @@ void StartDefaultTask(void *argument)
 
 	for(;;)
 	{
-		if (app_uart_read_byte(&byte)) {
-			if (app_uart_take_rx_overflow()) {
-				app_cmd_on_rx_overflow();
-			}
-			app_cmd_process_byte(byte);
+		app_watchdog_checkin(APP_WDG_ID_DEFAULT);
+
+		if (!app_uart_read_byte(&byte, UART_READ_WAIT_MS)) {
+			continue;
 		}
+
+		if (app_uart_take_rx_overflow()) {
+			app_cmd_on_rx_overflow();
+		}
+		app_cmd_process_byte(byte);
 	}
   /* USER CODE END 5 */
 }

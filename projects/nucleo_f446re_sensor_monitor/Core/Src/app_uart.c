@@ -69,8 +69,8 @@ void app_uart_start_rx(osMessageQueueId_t queue) {
 	}
 }
 
-bool app_uart_read_byte(uint8_t *byte) {
-	if (osMessageQueueGet(rxQueue, byte, NULL, osWaitForever) != osOK) {
+bool app_uart_read_byte(uint8_t *byte, uint32_t timeout_ms) {
+	if (osMessageQueueGet(rxQueue, byte, NULL, timeout_ms) != osOK) {
 		return false;
 	}
 	else {

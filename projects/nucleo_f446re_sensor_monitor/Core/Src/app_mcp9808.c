@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include "cmsis_os.h"
 #include "app_mcp9808.h"
+#include "app_watchdog.h"
 
 #define MCP9808_I2C_ADDRESS (0x18u << 1)
 #define MCP9808_REG_AMBIENT 0x05u
@@ -34,6 +35,7 @@ void app_mcp9808_task(void) {
 	app_temp_led_show(zone);
 
 	for (;;) {
+		app_watchdog_checkin(APP_WDG_ID_MCP9808);
 
 		if (read_temp_x10(&temp)) {
 			local.temp_x10 = temp;

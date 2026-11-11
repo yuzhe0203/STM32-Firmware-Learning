@@ -1,6 +1,7 @@
 #include <app_uart.h>
 #include <string.h>
 #include <stdbool.h>
+#include "app_watchdog.h"
 
 #define TX_RING_CAPACITY 512u
 #define DMA_RX_CAPACITY 64u

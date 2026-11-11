@@ -89,7 +89,11 @@ static void process_command(const char *command) {
 		app_uart_send_text(" config show\r\n");
 		app_uart_send_text(" config save\r\n");
 		app_uart_send_text(" config reset\r\n");
-		app_uart_send_text(" temp\r\n> ");
+		app_uart_send_text(" temp\r\n");
+#ifdef APP_DEBUG_COMMANDS
+		app_uart_send_text(" wdg spin\r\n");
+		app_uart_send_text(" wdg block\r\n> ");
+#endif
 	}
 	else if (strcmp(command, "led on") == 0) {
 		app_led_request(APP_LED_ON, 0);
@@ -217,6 +221,18 @@ static void process_command(const char *command) {
 	else if (strcmp(command, "temp") == 0) {
 		send_temp();
 	}
+#ifdef APP_DEBUG_COMMANDS
+	else if (strcmp(command, "wdg spin") == 0) {
+		app_uart_send_text("WDG TEST: spin.\r\n");
+		for (;;) {
+			//empty loop
+		}
+	}
+	else if (strcmp(command, "wdg block") == 0) {
+		app_uart_send_text("WDG TEST: block.\r\n");
+		osThreadSuspend(osThreadGetId());
+	}
+#endif
 	else {
 		app_uart_send_text("ERROR: unknown command, type 'help'.\r\n> ");
 	}

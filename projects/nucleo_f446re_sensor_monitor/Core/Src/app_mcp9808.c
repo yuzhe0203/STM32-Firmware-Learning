@@ -31,7 +31,7 @@ void app_mcp9808_task(void) {
 	app_mcp9808_snapshot_t local = {0};
 	int32_t temp;
 	uint32_t next_wake = osKernelGetTickCount();
-	app_temp_zone_t zone = TEMP_ZONE_NONE;
+	temp_zone_t zone = TEMP_ZONE_NONE;
 	app_temp_led_show(zone);
 
 	for (;;) {
@@ -41,7 +41,7 @@ void app_mcp9808_task(void) {
 			local.temp_x10 = temp;
 			local.valid = true;
 			local.ok_count++;
-			local.zone = app_temp_led_next_zone(zone, temp);
+			local.zone = temp_next_zone(zone, temp);
 		}
 		else {
 			local.valid = false;

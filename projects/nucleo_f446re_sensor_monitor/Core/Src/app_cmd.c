@@ -4,7 +4,7 @@
 #include "app_sensor.h"
 #include "app_config.h"
 #include "app_mcp9808.h"
-#include "app_temp_led.h"
+#include "temp_zone.h"
 #include "app_reset.h"
 #include <stdio.h>
 #include <string.h>
@@ -362,7 +362,7 @@ static void send_temp(void) {
 				   temp_sign,
 				   (unsigned long)temp_int,
 				   (unsigned long)temp_frac,
-				   app_temp_led_zone_to_string(temp.zone),
+				   temp_zone_to_string(temp.zone),
 				   (unsigned long)temp.ok_count,
 				   (unsigned long)temp.error_count);
 

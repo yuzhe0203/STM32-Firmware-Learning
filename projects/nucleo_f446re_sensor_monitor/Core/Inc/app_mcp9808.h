@@ -10,7 +10,7 @@ typedef struct {
 	bool valid;
 	uint32_t ok_count;
 	uint32_t error_count;
-	app_temp_zone_t zone;
+	temp_zone_t zone;
 }app_mcp9808_snapshot_t;
 
 void app_mcp9808_init(I2C_HandleTypeDef *hi2c);

@@ -12,7 +12,7 @@ typedef enum {
 	TEMP_ZONE_RED,
 } temp_zone_t;
 
-temp_zone_t temp_next_zone(temp_zone_t current, int32_t temp_x10);
+temp_zone_t temp_zone_next(temp_zone_t current, int32_t temp_x10);
 
 const char *temp_zone_to_string(temp_zone_t zone);
 

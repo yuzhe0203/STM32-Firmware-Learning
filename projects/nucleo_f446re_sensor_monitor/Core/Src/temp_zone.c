@@ -2,35 +2,24 @@
 #include "temp_zone.h"
 
 /* Public Part */
-temp_zone_t temp_next_zone(temp_zone_t current, int32_t temp_x10) {
+temp_zone_t temp_zone_next(temp_zone_t current, int32_t temp_x10) {
 	switch(current) {
 
 	case TEMP_ZONE_NONE:
-		if (temp_x10 >= 300) {
-			return TEMP_ZONE_RED;
-		}
-		else if (temp_x10 >= 260) {
-			return TEMP_ZONE_GREEN;
-		}
-		else {
-			return TEMP_ZONE_BLUE;
-		}
-		break;
 
 	case TEMP_ZONE_BLUE:
-		if (temp_x10 >= 300) {
+		if (temp_x10 >= TEMP_RED_MIN_X10) {
 			return TEMP_ZONE_RED;
 		}
-		else if (temp_x10 >= 260) {
+		else if (temp_x10 >= TEMP_GREEN_MIN_X10) {
 			return TEMP_ZONE_GREEN;
 		}
 		else {
 			return TEMP_ZONE_BLUE;
 		}
-		break;
 
 	case TEMP_ZONE_GREEN:
-		if (temp_x10 >= 300) {
+		if (temp_x10 >= TEMP_RED_MIN_X10) {
 			return TEMP_ZONE_RED;
 		}
 		else if (temp_x10 < (TEMP_GREEN_MIN_X10 - TEMP_HYST_X10)) {
@@ -39,7 +28,6 @@ temp_zone_t temp_next_zone(temp_zone_t current, int32_t temp_x10) {
 		else {
 			return TEMP_ZONE_GREEN;
 		}
-		break;
 
 	case TEMP_ZONE_RED:
 		if (temp_x10 < TEMP_GREEN_MIN_X10 - TEMP_HYST_X10) {
@@ -51,11 +39,9 @@ temp_zone_t temp_next_zone(temp_zone_t current, int32_t temp_x10) {
 		else {
 			return TEMP_ZONE_RED;
 		}
-		break;
 
 	default:
 		return TEMP_ZONE_NONE;
-		break;
 
 	}
 }

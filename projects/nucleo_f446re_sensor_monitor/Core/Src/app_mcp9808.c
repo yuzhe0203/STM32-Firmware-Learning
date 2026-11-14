@@ -41,7 +41,7 @@ void app_mcp9808_task(void) {
 			local.temp_x10 = temp;
 			local.valid = true;
 			local.ok_count++;
-			local.zone = temp_next_zone(zone, temp);
+			local.zone = temp_zone_next(zone, temp);
 		}
 		else {
 			local.valid = false;

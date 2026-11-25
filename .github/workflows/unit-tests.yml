@@ -1,0 +1,18 @@
+name: Unit Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    container: gcc:14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run unit tests
+        working-directory: projects/nucleo_f446re_sensor_monitor/tests
+        run: make test

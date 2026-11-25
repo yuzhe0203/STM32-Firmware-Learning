@@ -17,4 +17,5 @@ RemoteSystemsTempFiles/
 Thumbs.db
 Connect-stm32.ps1
 stm32-pin.png
-**/tests/build/
+**/build/
+**/build-release/

@@ -1,0 +1,38 @@
+name: Firmware Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        build_type: [Debug, Release]
+
+    defaults:
+      run:
+        working-directory: projects/nucleo_f446re_sensor_monitor
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build toolchain image
+        run: docker build -t stm32-arm-gcc docker
+
+      - name: Build firmware
+        run: >-
+          docker run --rm -v "$PWD:/work" -w /work stm32-arm-gcc
+          sh -c "cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          && cmake --build build -j"
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v6
+        with:
+          name: firmware-${{ matrix.build_type }}
+          path: |
+            projects/nucleo_f446re_sensor_monitor/build/nucleo_f446re_sensor_monitor.elf
+            projects/nucleo_f446re_sensor_monitor/build/nucleo_f446re_sensor_monitor.map

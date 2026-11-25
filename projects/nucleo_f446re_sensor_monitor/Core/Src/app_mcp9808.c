@@ -2,6 +2,7 @@
 #include "cmsis_os.h"
 #include "app_mcp9808.h"
 #include "app_watchdog.h"
+#include "mcp9808_conv.h"
 
 #define MCP9808_I2C_ADDRESS (0x18u << 1)
 #define MCP9808_REG_AMBIENT 0x05u
@@ -31,7 +32,7 @@ void app_mcp9808_task(void) {
 	app_mcp9808_snapshot_t local = {0};
 	int32_t temp;
 	uint32_t next_wake = osKernelGetTickCount();
-	app_temp_zone_t zone = TEMP_ZONE_NONE;
+	temp_zone_t zone = TEMP_ZONE_NONE;
 	app_temp_led_show(zone);
 
 	for (;;) {
@@ -41,7 +42,7 @@ void app_mcp9808_task(void) {
 			local.temp_x10 = temp;
 			local.valid = true;
 			local.ok_count++;
-			local.zone = app_temp_led_next_zone(zone, temp);
+			local.zone = temp_zone_next(zone, temp);
 		}
 		else {
 			local.valid = false;
@@ -78,21 +79,12 @@ static bool read_register(uint8_t reg, uint16_t *value) {
 
 static bool read_temp_x10(int32_t *out) {
 	uint16_t value;
-	int32_t temp;
 
 	if (!read_register(MCP9808_REG_AMBIENT, &value)) {
 		return false;
 	}
 
-	value &= 0x1FFFu;
-	temp = (int32_t)value;
-
-	if (temp & 0x1000u) {
-		temp -= 0x2000u;
-	}
-
-	temp = (temp * 10) /16;
-	*out = temp;
+	*out = mcp9808_conv_to_x10(value);
 
 	return true;
 }

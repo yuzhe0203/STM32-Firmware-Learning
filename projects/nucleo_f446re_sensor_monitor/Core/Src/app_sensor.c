@@ -3,6 +3,7 @@
 #include "cmsis_os.h"
 #include "app_sensor.h"
 #include "app_watchdog.h"
+#include "chip_temp.h"
 
 #define ADC_BUFFER_LEN 1u
 #define SENSOR_FLAG_NEW_SAMPLE 0x01u
@@ -10,8 +11,6 @@
 #define SENSOR_WAIT_SLICE_MS 1000u
 #define TS_CAL1_ADDRESS 0x1FFF7A2Cu
 #define TS_CAL2_ADDRESS 0x1FFF7A2Eu
-#define TS_CAL1_TEMP_C ((int32_t)30)
-#define TS_CAL2_TEMP_C ((int32_t)110)
 #define TIM_TICKS_PER_MS 10u // Assumes PSC = 8399 and 84 MHz timer clock (10 kHz tick)
 
 static ADC_HandleTypeDef *adc = NULL;
@@ -22,8 +21,9 @@ static volatile uint16_t adc_buffer[ADC_BUFFER_LEN] = {0};
 static volatile uint32_t isr_count = 0u;
 static uint32_t period_ms = SAMPLE_DEFAULT_PERIOD_MS;
 static app_sensor_snapshot_t shared = {0};
+static uint16_t ts_cal1 = 0u;
+static uint16_t ts_cal2 = 0u;
 
-static int32_t raw_to_temp_x10(uint16_t raw);
 static void apply_period(uint32_t ms);
 static void publish(const app_sensor_snapshot_t *s);
 
@@ -32,6 +32,8 @@ void app_sensor_init(ADC_HandleTypeDef *hadc, TIM_HandleTypeDef *htim) {
 	adc = hadc;
 	tim = htim;
 	mutex = osMutexNew(NULL);
+	ts_cal1 = *(const uint16_t *)TS_CAL1_ADDRESS;
+	ts_cal2 = *(const uint16_t *)TS_CAL2_ADDRESS;
 
 	if (mutex == NULL) {
 		Error_Handler();
@@ -99,7 +101,7 @@ void app_sensor_task() {
 		}
 		else {
 			uint16_t raw = adc_buffer[0];
-			int32_t temp = raw_to_temp_x10(raw);
+			int32_t temp = chip_temp_from_raw(raw, ts_cal1, ts_cal2);
 			last_sample_tick = osKernelGetTickCount();
 
 			sum = (sum - history[index]) + temp;
@@ -122,20 +124,6 @@ void app_sensor_task() {
 }
 
 /* Private Part */
-
-static int32_t raw_to_temp_x10(uint16_t raw) {
-	int32_t cal1 = *(const uint16_t *)TS_CAL1_ADDRESS;
-	int32_t cal2 = *(const uint16_t *)TS_CAL2_ADDRESS;
-	int32_t raw_s32 = (int32_t)raw;
-
-	if (cal1 == cal2) {
-		return 0;
-	}
-
-	return TS_CAL1_TEMP_C * 10 + ((TS_CAL2_TEMP_C - TS_CAL1_TEMP_C) * 10) * (raw_s32 - cal1) / (cal2 - cal1);
-
-}
-
 static void apply_period(uint32_t ms) {
 	uint32_t arr = (ms * TIM_TICKS_PER_MS) - 1;
 
